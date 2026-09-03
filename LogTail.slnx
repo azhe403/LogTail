@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LogTail.Core/LogTail.Core.csproj" />
+    <Project Path="src/LogTail.UI/LogTail.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LogTail.Core.Tests/LogTail.Core.Tests.csproj" />
+    <Project Path="tests/LogTail.UI.Tests/LogTail.UI.Tests.csproj" />
+  </Folder>
+</Solution>

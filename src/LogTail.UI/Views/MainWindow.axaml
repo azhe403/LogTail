@@ -1,0 +1,57 @@
+<rxui:ReactiveWindow x:TypeArguments="vm:MainWindowViewModel"
+                    xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:rxui="using:Avalonia.ReactiveUI"
+                    xmlns:vm="using:LogTail.UI.ViewModels"
+                    xmlns:models="using:LogTail.Core.Models"
+                    x:Class="LogTail.UI.Views.MainWindow"
+                    x:DataType="vm:MainWindowViewModel"
+                    Title="{Binding WindowTitle}"
+                    Width="900"
+                    Height="600">
+  <DockPanel>
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="_File">
+        <MenuItem Header="_Open..." Command="{Binding OpenFileCommand}" />
+        <Separator />
+        <MenuItem Header="E_xit" />
+      </MenuItem>
+      <MenuItem Header="_View">
+        <MenuItem Header="_Theme">
+          <MenuItem Header="System" Command="{Binding SetThemeCommand}" CommandParameter="{x:Static models:ThemeMode.System}" />
+          <MenuItem Header="Light" Command="{Binding SetThemeCommand}" CommandParameter="{x:Static models:ThemeMode.Light}" />
+          <MenuItem Header="Dark" Command="{Binding SetThemeCommand}" CommandParameter="{x:Static models:ThemeMode.Dark}" />
+        </MenuItem>
+      </MenuItem>
+    </Menu>
+
+    <Grid DockPanel.Dock="Bottom" Height="28" ColumnDefinitions="*,Auto" Margin="8,0">
+      <TextBlock Text="{Binding StatusMessage}"
+                 VerticalAlignment="Center"
+                 FontSize="11" />
+      <ToggleSwitch Grid.Column="1"
+                    IsChecked="{Binding AutoScroll, Mode=TwoWay}"
+                    OnContent="Auto-scroll"
+                    OffContent="Auto-scroll"
+                    FontSize="11"
+                    VerticalAlignment="Center" />
+    </Grid>
+
+    <ListBox x:Name="LogListBox" ItemsSource="{Binding VisibleEvents}">
+      <ListBox.Styles>
+        <Style Selector="ListBoxItem">
+          <Setter Property="MinHeight" Value="0" />
+          <Setter Property="Padding" Value="6,1" />
+          <Setter Property="Margin" Value="0" />
+        </Style>
+      </ListBox.Styles>
+      <ListBox.ItemTemplate>
+        <DataTemplate DataType="models:EnrichedLogEvent">
+          <TextBlock Text="{Binding Raw.Line}"
+                     FontFamily="Cascadia Code,Consolas,Menlo,DejaVu Sans Mono,monospace"
+                     FontSize="12" />
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </DockPanel>
+</rxui:ReactiveWindow>

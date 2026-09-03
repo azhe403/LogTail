@@ -1,0 +1,64 @@
+## .NET
+bin/
+obj/
+.artifacts/
+*.user
+*.suo
+*.userprefs
+*.userosscache
+*.sln.docstats
+*.pidb
+
+## NuGet
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nupkg
+**/packages/repositories.config
+
+## IDE & Editors
+.vs/
+.idea/
+.vscode/
+*.swp
+*~
+*.DotSettings.user
+
+## OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## Build & Test Results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Ll]og/
+[Ll]ogs/
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResult.xml
+coverage*/
+
+## Publish
+*.Publish.xml
+*.azurePubxml
+*.pubxml
+*.publishproj
+
+## Eling Memory Runtime
+.eling/logs/
+.eling/*.db*
+.eling/*.db-journal
+.eling/*.db-wal
+.eling/runtime/
+.eling/index.db*
+!.eling/memories/
+
+## Local Temporary & Tooling Artifacts
+.tmp/
+*.tmp
