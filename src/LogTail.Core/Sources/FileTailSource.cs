@@ -75,7 +75,7 @@ public sealed class FileTailSource : ILogSource
         _readLoop = Task.Run(() => ReadLoopAsync(_cts.Token), _cts.Token);
 
         IsRunning = true;
-        _logger.Info($"Started tailing: {_filePath}");
+        _logger.Debug($"Started tailing: {_filePath}");
     }
 
     public async ValueTask StopAsync()
@@ -110,7 +110,7 @@ public sealed class FileTailSource : ILogSource
         _cts?.Dispose();
         _cts = null;
 
-        _logger.Info($"Stopped tailing: {_filePath}");
+        _logger.Debug($"Stopped tailing: {_filePath}");
     }
 
     public async ValueTask DisposeAsync()

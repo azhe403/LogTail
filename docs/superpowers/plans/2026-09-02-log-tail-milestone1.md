@@ -93,7 +93,7 @@ C:\Projexts\Space\log-tail\
 - Consumes: nothing
 - Produces: compilable solution with all projects referencing each other correctly
 
-- [ ] **Step 1: Create solution and project files**
+- [x] **Step 1: Create solution and project files**
 
 ```bash
 dotnet new sln --name LogTail
@@ -123,7 +123,7 @@ Note: If `dotnet new avalonia.app` is not available (no Avalonia template instal
 </Project>
 ```
 
-- [ ] **Step 2: Add NuGet packages to Core.csproj**
+- [x] **Step 2: Add NuGet packages to Core.csproj**
 
 Edit `src/LogTail.Core/LogTail.Core.csproj`:
 
@@ -139,7 +139,7 @@ Edit `src/LogTail.Core/LogTail.Core.csproj`:
 
 No external packages for Core — pure .NET + Rx (Rx comes transitively via ReactiveUI reference in UI, but Core itself references no Rx).
 
-- [ ] **Step 3: Add project references**
+- [x] **Step 3: Add project references**
 
 ```bash
 dotnet sln add src/LogTail.Core
@@ -153,7 +153,7 @@ dotnet add tests/LogTail.UI.Tests reference src/LogTail.Core
 dotnet add src/LogTail.UI reference src/LogTail.Core
 ```
 
-- [ ] **Step 4: Add test packages**
+- [x] **Step 4: Add test packages**
 
 ```bash
 cd tests/LogTail.Core.Tests
@@ -169,7 +169,7 @@ dotnet add package Avalonia.Headless --version 12.1.2
 dotnet add package Avalonia.Headless.XUnit --version 12.1.2
 ```
 
-- [ ] **Step 5: Verify solution builds**
+- [x] **Step 5: Verify solution builds**
 
 ```bash
 dotnet build
@@ -177,7 +177,7 @@ dotnet build
 
 Expected: BUILD SUCCEEDED. If `net10.0` fails (Avalonia 12 packages not yet targeting net10.0 on NuGet), change `<TargetFramework>` to `net9.0` in all projects and retry.
 
-- [ ] **Step 6: Remove auto-generated `Class1.cs` and `UnitTest1.cs`**
+- [x] **Step 6: Remove auto-generated `Class1.cs` and `UnitTest1.cs`**
 
 ```bash
 Remove-Item src/LogTail.Core/Class1.cs
@@ -185,7 +185,7 @@ Remove-Item tests/LogTail.Core.Tests/UnitTest1.cs
 Remove-Item tests/LogTail.UI.Tests/UnitTest1.cs
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -207,7 +207,7 @@ git commit -m "chore: scaffold solution with Core, UI, and test projects"
 - Consumes: nothing
 - Produces: `RawLogEvent`, `EnrichedLogEvent`, `LogLevel`, `ThemeMode`, `AppSettings` — used by every other task
 
-- [ ] **Step 1: Create LogLevel.cs**
+- [x] **Step 1: Create LogLevel.cs**
 
 ```csharp
 namespace LogTail.Core.Models;
@@ -224,7 +224,7 @@ public enum LogLevel
 }
 ```
 
-- [ ] **Step 2: Create ThemeMode.cs**
+- [x] **Step 2: Create ThemeMode.cs**
 
 ```csharp
 namespace LogTail.Core.Models;
@@ -237,7 +237,7 @@ public enum ThemeMode
 }
 ```
 
-- [ ] **Step 3: Create RawLogEvent.cs**
+- [x] **Step 3: Create RawLogEvent.cs**
 
 ```csharp
 namespace LogTail.Core.Models;
@@ -250,7 +250,7 @@ public readonly record struct RawLogEvent(
     bool IsHistorical = false);
 ```
 
-- [ ] **Step 4: Create EnrichedLogEvent.cs**
+- [x] **Step 4: Create EnrichedLogEvent.cs**
 
 ```csharp
 namespace LogTail.Core.Models;
@@ -264,7 +264,7 @@ public sealed record EnrichedLogEvent(
     bool IsHidden = false);
 ```
 
-- [ ] **Step 5: Create AppSettings.cs**
+- [x] **Step 5: Create AppSettings.cs**
 
 ```csharp
 namespace LogTail.Core.Models;
@@ -276,7 +276,7 @@ public sealed record AppSettings(
     string DefaultEncoding = "utf-8");
 ```
 
-- [ ] **Step 6: Verify build**
+- [x] **Step 6: Verify build**
 
 ```bash
 dotnet build src/LogTail.Core
@@ -284,7 +284,7 @@ dotnet build src/LogTail.Core
 
 Expected: BUILD SUCCEEDED.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/LogTail.Core/Models/
@@ -303,7 +303,7 @@ git commit -m "feat(core): add data models (RawLogEvent, EnrichedLogEvent, LogLe
 - Consumes: nothing
 - Produces: `RingBuffer<T>` class used by `FileTailSourceTests` (Task 6) and `MainWindowViewModel` (Task 8)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/LogTail.Core.Tests/Buffer/RingBufferTests.cs`:
 
@@ -429,7 +429,7 @@ public sealed class RingBufferTests
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~RingBufferTests" --no-build
@@ -437,7 +437,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~RingBufferTest
 
 Expected: FAIL — `RingBuffer<T>` type does not exist.
 
-- [ ] **Step 3: Implement RingBuffer\<T\>**
+- [x] **Step 3: Implement RingBuffer\<T\>**
 
 Create `src/LogTail.Core/Buffer/RingBuffer.cs`:
 
@@ -515,7 +515,7 @@ public sealed class RingBuffer<T> : IReadOnlyList<T>
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~RingBufferTests"
@@ -523,7 +523,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~RingBufferTest
 
 Expected: PASS (9/9).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/LogTail.Core/Buffer/ tests/LogTail.Core.Tests/Buffer/
@@ -544,7 +544,7 @@ git commit -m "feat(core): add RingBuffer<T> with eviction and thread-safe read"
 - Consumes: `AppSettings`, `ThemeMode` (Task 2)
 - Produces: `SettingsStore` used by `MainWindowViewModel` (Task 8)
 
-- [ ] **Step 1: Create ILogTailLogger.cs**
+- [x] **Step 1: Create ILogTailLogger.cs**
 
 ```csharp
 namespace LogTail.Core.Logging;
@@ -558,7 +558,7 @@ public interface ILogTailLogger
 }
 ```
 
-- [ ] **Step 2: Create ConsoleLogger.cs**
+- [x] **Step 2: Create ConsoleLogger.cs**
 
 ```csharp
 namespace LogTail.Core.Logging;
@@ -573,7 +573,7 @@ public sealed class ConsoleLogger : ILogTailLogger
 }
 ```
 
-- [ ] **Step 3: Write the failing SettingsStore tests**
+- [x] **Step 3: Write the failing SettingsStore tests**
 
 Create `tests/LogTail.Core.Tests/Persistence/SettingsStoreTests.cs`:
 
@@ -652,7 +652,7 @@ public sealed class SettingsStoreTests : IDisposable
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~SettingsStoreTests" --no-build
@@ -660,7 +660,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~SettingsStoreT
 
 Expected: FAIL — `SettingsStore` does not exist.
 
-- [ ] **Step 5: Implement SettingsStore**
+- [x] **Step 5: Implement SettingsStore**
 
 Create `src/LogTail.Core/Persistence/SettingsStore.cs`:
 
@@ -734,7 +734,7 @@ public sealed class SettingsStore
 }
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~SettingsStoreTests"
@@ -742,7 +742,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~SettingsStoreT
 
 Expected: PASS (4/4).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/LogTail.Core/Logging/ src/LogTail.Core/Persistence/ tests/LogTail.Core.Tests/Persistence/
@@ -762,7 +762,7 @@ git commit -m "feat(core): add SettingsStore with JSON persistence and logger ab
 - Consumes: `RawLogEvent` (Task 2)
 - Produces: `ILogSource`, `ILogSourceFactory` — consumed by `FileTailSource` (Task 6), `MainWindowViewModel` (Task 8)
 
-- [ ] **Step 1: Create ILogSource.cs**
+- [x] **Step 1: Create ILogSource.cs**
 
 ```csharp
 using System.Reactive.Linq;
@@ -783,7 +783,7 @@ public interface ILogSource : IAsyncDisposable
 }
 ```
 
-- [ ] **Step 2: Create ILogSourceFactory.cs**
+- [x] **Step 2: Create ILogSourceFactory.cs**
 
 ```csharp
 namespace LogTail.Core.Sources;
@@ -794,7 +794,7 @@ public interface ILogSourceFactory
 }
 ```
 
-- [ ] **Step 3: Create LogSourceFactory.cs**
+- [x] **Step 3: Create LogSourceFactory.cs**
 
 ```csharp
 using LogTail.Core.Logging;
@@ -821,7 +821,7 @@ public sealed class LogSourceFactory : ILogSourceFactory
 
 Note: `FileTailSource` is created in Task 6. This task creates the factory that depends on it — but it will compile only after Task 6 is complete. Create this file after Task 6, or create the file now with the class marked `partial` and the constructor call forward-declared. Recommended approach: defer the factory creation to after Task 6, or create the file now with a `NotImplementedException` stub and fill it in after Task 6. Simplest: create Tasks 5 and 6 together, committing Task 5 output only after Task 6 compiles.
 
-- [ ] **Step 4: Verify build** (after Task 6 is also created)
+- [x] **Step 4: Verify build** (after Task 6 is also created)
 
 ```bash
 dotnet build src/LogTail.Core
@@ -829,7 +829,7 @@ dotnet build src/LogTail.Core
 
 Expected: BUILD SUCCEEDED.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/LogTail.Core/Sources/
@@ -848,7 +848,7 @@ git commit -m "feat(core): add ILogSource, ILogSourceFactory, and LogSourceFacto
 - Consumes: `RawLogEvent` (Task 2), `ILogTailLogger` (Task 4)
 - Produces: `FileTailSource` — consumed by `LogSourceFactory` (Task 5), `MainWindowViewModel` (Task 8)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/LogTail.Core.Tests/Sources/FileTailSourceTests.cs`:
 
@@ -995,7 +995,7 @@ public sealed class FileTailSourceTests : IAsyncLifetime
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~FileTailSourceTests" --no-build
@@ -1003,7 +1003,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~FileTailSource
 
 Expected: FAIL — `FileTailSource` does not exist.
 
-- [ ] **Step 3: Implement FileTailSource**
+- [x] **Step 3: Implement FileTailSource**
 
 Create `src/LogTail.Core/Sources/FileTailSource.cs`:
 
@@ -1268,7 +1268,7 @@ public sealed class FileTailSource : ILogSource
 
 Note: the `lock (_readLock)` / `Monitor.Wait` / `Monitor.Pulse` pattern replaces a `SemaphoreSlim` for simplicity. The lock is short-held (just signaling), so contention is negligible.
 
-- [ ] **Step 4: Now create LogSourceFactory.cs (from Task 5)**
+- [x] **Step 4: Now create LogSourceFactory.cs (from Task 5)**
 
 ```csharp
 using LogTail.Core.Logging;
@@ -1293,7 +1293,7 @@ public sealed class LogSourceFactory : ILogSourceFactory
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~FileTailSourceTests"
@@ -1301,7 +1301,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~FileTailSource
 
 Expected: PASS (5/5). Note: these tests involve file I/O timing, so some tolerance is needed. If a test is flaky, increase the `Task.Delay` values.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/LogTail.Core/Sources/ tests/LogTail.Core.Tests/Sources/
@@ -1320,7 +1320,7 @@ git commit -m "feat(core): implement FileTailSource with FileSystemWatcher + pol
 - Consumes: `RawLogEvent` (Task 2), `LogLevel` (Task 2)
 - Produces: `Enrich` static class — used by `MainWindowViewModel` (Task 8)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/LogTail.Core.Tests/Pipeline/EnrichTests.cs`:
 
@@ -1406,7 +1406,7 @@ public sealed class EnrichTests
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~EnrichTests" --no-build
@@ -1414,7 +1414,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~EnrichTests" -
 
 Expected: FAIL — `Enrich` does not exist.
 
-- [ ] **Step 3: Implement Enrich**
+- [x] **Step 3: Implement Enrich**
 
 Create `src/LogTail.Core/Pipeline/Enrich.cs`:
 
@@ -1444,7 +1444,7 @@ public static class Enrich
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 ```bash
 dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~EnrichTests"
@@ -1452,7 +1452,7 @@ dotnet test tests/LogTail.Core.Tests --filter "FullyQualifiedName~EnrichTests"
 
 Expected: PASS (5/5).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/LogTail.Core/Pipeline/ tests/LogTail.Core.Tests/Pipeline/
@@ -1472,7 +1472,7 @@ git commit -m "feat(core): add no-op Enrich pipeline stage for M1"
 - Consumes: `ILogSourceFactory` (Task 5), `SettingsStore` (Task 4), `RingBuffer<T>` (Task 3), `Enrich` (Task 7), `EnrichedLogEvent`, `ThemeMode`, `AppSettings` (Task 2)
 - Produces: `MainWindowViewModel` — consumed by `MainWindow.axaml` (Task 10)
 
-- [ ] **Step 1: Create TestApp.cs (Avalonia headless bootstrapper)**
+- [x] **Step 1: Create TestApp.cs (Avalonia headless bootstrapper)**
 
 Create `tests/LogTail.UI.Tests/TestApp.cs`:
 
@@ -1494,7 +1494,7 @@ public static class TestApp
 }
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `tests/LogTail.UI.Tests/MainWindowViewModelTests.cs`:
 
@@ -1581,7 +1581,7 @@ using Avalonia.Headless.XUnit;
 public sealed class MainWindowViewModelTests
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 ```bash
 dotnet test tests/LogTail.UI.Tests --filter "FullyQualifiedName~MainWindowViewModelTests" --no-build
@@ -1589,7 +1589,7 @@ dotnet test tests/LogTail.UI.Tests --filter "FullyQualifiedName~MainWindowViewMo
 
 Expected: FAIL — `MainWindowViewModel` does not exist.
 
-- [ ] **Step 4: Implement MainWindowViewModel**
+- [x] **Step 4: Implement MainWindowViewModel**
 
 Create `src/LogTail.UI/ViewModels/MainWindowViewModel.cs`:
 
@@ -1724,7 +1724,7 @@ public sealed class MainWindowViewModel : ReactiveObject
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 ```bash
 dotnet test tests/LogTail.UI.Tests --filter "FullyQualifiedName~MainWindowViewModelTests"
@@ -1732,7 +1732,7 @@ dotnet test tests/LogTail.UI.Tests --filter "FullyQualifiedName~MainWindowViewMo
 
 Expected: PASS (3/3).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/LogTail.UI/ViewModels/ tests/LogTail.UI.Tests/
@@ -1751,7 +1751,7 @@ git commit -m "feat(ui): add MainWindowViewModel with open, clear, theme command
 - Consumes: `MainWindowViewModel` (Task 8), `ThemeMode` (Task 2), `SettingsStore` (Task 4)
 - Produces: Application bootstrap that wires theme and DI — used by `Program.cs` (Task 11) and `MainWindow.axaml` (Task 10)
 
-- [ ] **Step 1: Create App.axaml**
+- [x] **Step 1: Create App.axaml**
 
 ```xml
 <Application xmlns="https://github.com/avaloniaui"
@@ -1764,7 +1764,7 @@ git commit -m "feat(ui): add MainWindowViewModel with open, clear, theme command
 </Application>
 ```
 
-- [ ] **Step 2: Create App.axaml.cs**
+- [x] **Step 2: Create App.axaml.cs**
 
 ```csharp
 using Avalonia;
@@ -1836,7 +1836,7 @@ public partial class App : Application
 
 Note: `viewModel.WhenAnyValue` requires a `using ReactiveUI;` and `using System.Reactive.Linq;`. Add if not covered by implicit usings.
 
-- [ ] **Step 3: Verify build**
+- [x] **Step 3: Verify build**
 
 ```bash
 dotnet build src/LogTail.UI
@@ -1844,7 +1844,7 @@ dotnet build src/LogTail.UI
 
 Expected: BUILD SUCCEEDED (may have warnings about `App.axaml` not found if the Avalonia template wasn't used; ensure the file is in the project root and marked as `<AvaloniaResource>` in `.csproj`).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/LogTail.UI/App.axaml src/LogTail.UI/App.axaml.cs
@@ -1863,7 +1863,7 @@ git commit -m "feat(ui): wire theme persistence and DI in App.axaml.cs"
 - Consumes: `MainWindowViewModel` (Task 8), `EnrichedLogEvent` (Task 2)
 - Produces: UI shell — the visual app
 
-- [ ] **Step 1: Create MainWindow.axaml**
+- [x] **Step 1: Create MainWindow.axaml**
 
 ```xml
 <Window xmlns="https://github.com/avaloniaui"
@@ -1913,7 +1913,7 @@ git commit -m "feat(ui): wire theme persistence and DI in App.axaml.cs"
 </Window>
 ```
 
-- [ ] **Step 2: Create MainWindow.axaml.cs**
+- [x] **Step 2: Create MainWindow.axaml.cs**
 
 ```csharp
 using Avalonia.Controls;
@@ -1929,7 +1929,7 @@ public partial class MainWindow : Window
 }
 ```
 
-- [ ] **Step 3: Wire OpenFile via StorageProvider**
+- [x] **Step 3: Wire OpenFile via StorageProvider**
 
 Update `MainWindowViewModel.cs` — the `OpenFileAsync` method needs to use Avalonia's `IStorageProvider` to show a file picker. Since `IStorageProvider` is a UI concern, inject a delegate or interface:
 
@@ -2008,7 +2008,7 @@ public partial class MainWindow : Window
 }
 ```
 
-- [ ] **Step 4: Verify build**
+- [x] **Step 4: Verify build**
 
 ```bash
 dotnet build src/LogTail.UI
@@ -2016,7 +2016,7 @@ dotnet build src/LogTail.UI
 
 Expected: BUILD SUCCEEDED.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/LogTail.UI/Views/
@@ -2034,7 +2034,7 @@ git commit -m "feat(ui): add MainWindow with virtualized log view and file picke
 - Consumes: `App` (Task 9)
 - Produces: Application entry point — launches the app
 
-- [ ] **Step 1: Create Program.cs**
+- [x] **Step 1: Create Program.cs**
 
 ```csharp
 using Avalonia;
@@ -2059,7 +2059,7 @@ internal static class Program
 }
 ```
 
-- [ ] **Step 2: Verify full solution builds**
+- [x] **Step 2: Verify full solution builds**
 
 ```bash
 dotnet build
@@ -2067,7 +2067,7 @@ dotnet build
 
 Expected: BUILD SUCCEEDED across all projects.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/LogTail.UI/Program.cs
@@ -2084,7 +2084,7 @@ git commit -m "feat(ui): add Program.cs entry point"
 - Consumes: all previous tasks
 - Produces: verified Milestone 1 that meets the Definition of Done
 
-- [ ] **Step 1: Run all tests**
+- [x] **Step 1: Run all tests**
 
 ```bash
 dotnet test

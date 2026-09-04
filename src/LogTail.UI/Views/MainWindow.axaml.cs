@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Specialized;
+using System.Linq;
 using System.Reactive;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
@@ -7,10 +8,12 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.ReactiveUI;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using LogTail.Core.Models;
 using LogTail.UI.ViewModels;
 using ReactiveUI;
 
@@ -25,6 +28,11 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
     public MainWindow()
     {
         InitializeComponent();
+
+        // DragDrop handlers for dropping files from OS file manager
+        AddHandler(DragDrop.DropEvent, OnDrop);
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
 
         this.WhenActivated(disposables =>
         {
@@ -42,17 +50,10 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
             // Subscribe to collection changes for auto-scroll on new log items
             if (ViewModel != null)
             {
-                Observable.FromEventPattern<NotifyCollectionChangedEventHandler, NotifyCollectionChangedEventArgs>(
-                        h => ViewModel.VisibleEvents.CollectionChanged += h,
-                        h => ViewModel.VisibleEvents.CollectionChanged -= h)
+                this.WhenAnyValue(x => x.ViewModel!.SelectedTab)
+                    .DistinctUntilChanged()
                     .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(_ =>
-                    {
-                        if (ViewModel is { AutoScroll: true, VisibleEvents.Count: > 0 })
-                        {
-                            RequestScrollToBottom();
-                        }
-                    })
+                    .Subscribe(_ => AttachSelectedTabScrollListener(disposables))
                     .DisposeWith(disposables);
             }
 
@@ -62,24 +63,51 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
 
     private void AttachScrollViewerListener(CompositeDisposable disposables)
     {
-        _scrollViewer = LogListBox.FindDescendantOfType<ScrollViewer>();
-        if (_scrollViewer != null)
+        // Scroll-viewer detection is wired per active tab in AttachSelectedTabScrollListener.
+    }
+
+    private void AttachSelectedTabScrollListener(CompositeDisposable disposables)
+    {
+        if (ViewModel?.SelectedTab == null)
         {
-            _scrollViewer.GetObservable(ScrollViewer.OffsetProperty)
-                .Subscribe(OnScrollOffsetChanged)
-                .DisposeWith(disposables);
+            return;
         }
-        else
-        {
-            // If template not fully materialized yet, subscribe once attached to visual tree
-            LogListBox.TemplateApplied += (_, _) =>
+
+        var tab = ViewModel.SelectedTab;
+        var tabDisposables = new CompositeDisposable();
+
+        // Auto-scroll to bottom on new log events for this tab.
+        Observable.FromEventPattern<NotifyCollectionChangedEventHandler, NotifyCollectionChangedEventArgs>(
+                h => tab.LogEvents.CollectionChanged += h,
+                h => tab.LogEvents.CollectionChanged -= h)
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(_ =>
             {
-                _scrollViewer = LogListBox.FindDescendantOfType<ScrollViewer>();
-                _scrollViewer?.GetObservable(ScrollViewer.OffsetProperty)
-                    .Subscribe(OnScrollOffsetChanged)
-                    .DisposeWith(disposables);
-            };
-        }
+                if (ViewModel is { AutoScroll: true } && tab.LogEvents.Count > 0)
+                {
+                    RequestScrollToBottom();
+                }
+            })
+            .DisposeWith(tabDisposables);
+
+        // Detect manual scrolling (scroll up disables auto-scroll) for this tab's ListBox.
+        Dispatcher.UIThread.Post(() =>
+        {
+            var listBox = this.FindControl<TabControl>("MainTabControl")?
+                .FindDescendantOfType<ListBox>();
+            var scrollViewer = listBox?.FindDescendantOfType<ScrollViewer>();
+            if (scrollViewer == null)
+            {
+                return;
+            }
+
+            _scrollViewer = scrollViewer;
+            scrollViewer.GetObservable(ScrollViewer.OffsetProperty)
+                .Subscribe(OnScrollOffsetChanged)
+                .DisposeWith(tabDisposables);
+        }, DispatcherPriority.Background);
+
+        tabDisposables.DisposeWith(disposables);
     }
 
     private void OnScrollOffsetChanged(Vector offset)
@@ -89,10 +117,10 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         var extentHeight = _scrollViewer.Extent.Height;
         var viewportHeight = _scrollViewer.Viewport.Height;
 
-        // If content fits completely within viewport, auto-scroll stays enabled.
+        // If content fits completely within viewport, there is nothing to scroll.
+        // Respect the user's explicit AutoScroll choice — do not force it on.
         if (extentHeight <= viewportHeight)
         {
-            if (!ViewModel.AutoScroll) ViewModel.AutoScroll = true;
             return;
         }
 
@@ -108,7 +136,7 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
 
     private void RequestScrollToBottom()
     {
-        if (ViewModel == null || !ViewModel.AutoScroll || ViewModel.VisibleEvents.Count == 0 || _scrollRequested)
+        if (ViewModel == null || !ViewModel.AutoScroll || _scrollRequested)
         {
             return;
         }
@@ -117,7 +145,7 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         Dispatcher.UIThread.Post(() =>
         {
             _scrollRequested = false;
-            if (ViewModel is { AutoScroll: true, VisibleEvents.Count: > 0 })
+            if (ViewModel is { AutoScroll: true })
             {
                 ScrollToBottom();
             }
@@ -126,12 +154,14 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
 
     private void ScrollToBottom()
     {
-        if (ViewModel == null || ViewModel.VisibleEvents.Count == 0) return;
+        if (ViewModel?.SelectedTab == null || ViewModel.SelectedTab.LogEvents.Count == 0) return;
 
         _isProgrammaticScroll = true;
         try
         {
-            LogListBox.ScrollIntoView(ViewModel.VisibleEvents.Count - 1);
+            var listBox = this.FindControl<TabControl>("MainTabControl")?
+                .FindDescendantOfType<ListBox>();
+            listBox?.ScrollIntoView(ViewModel.SelectedTab.LogEvents.Count - 1);
         }
         finally
         {
@@ -153,5 +183,92 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
 
         var selectedPath = result.Count > 0 ? result[0].Path.LocalPath : null;
         interaction.SetOutput(selectedPath);
+    }
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        if (e.DataTransfer is { } dt && dt.TryGetFiles() is { Length: > 0 })
+        {
+            e.DragEffects = DragDropEffects.Copy;
+            Classes.Add("drag-over");
+        }
+        else
+        {
+            e.DragEffects = DragDropEffects.None;
+            Classes.Remove("drag-over");
+        }
+    }
+
+    private void OnDragLeave(object? sender, DragEventArgs e)
+    {
+        Classes.Remove("drag-over");
+    }
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        Classes.Remove("drag-over");
+
+        var dt = e.DataTransfer;
+        if (ViewModel == null || dt == null)
+        {
+            return;
+        }
+
+        var files = dt.TryGetFiles();
+        if (files == null)
+        {
+            return;
+        }
+
+        var vm = ViewModel;
+        if (vm == null)
+        {
+            return;
+        }
+
+        foreach (var file in files)
+        {
+            if (file is not IStorageFile storageFile)
+            {
+                // Folders arrive as IStorageFolder; silently ignore per spec.
+                continue;
+            }
+
+            var path = storageFile.Path.LocalPath;
+            if (LogFileValidator.TryValidateFile(path, out var error))
+            {
+                vm.AddTab(path);
+            }
+            else if (error != null)
+            {
+                vm.StatusMessage = error;
+            }
+        }
+    }
+
+    private async void OnTabLogPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not ListBox listBox ||
+            e.GetCurrentPoint(listBox).Properties.IsLeftButtonPressed is false)
+        {
+            return;
+        }
+
+        // Build text from all currently-selected log lines.
+        var lines = (listBox.SelectedItems ?? Array.Empty<object?>())
+            .OfType<EnrichedLogEvent>()
+            .Select(ev => ev.Raw.Line)
+            .ToList();
+
+        if (lines.Count == 0)
+        {
+            return;
+        }
+
+        var payload = string.Join(Environment.NewLine, lines);
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.CreateText(payload));
+
+        await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Copy);
     }
 }

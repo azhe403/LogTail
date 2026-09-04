@@ -4,11 +4,14 @@
                     xmlns:rxui="using:Avalonia.ReactiveUI"
                     xmlns:vm="using:LogTail.UI.ViewModels"
                     xmlns:models="using:LogTail.Core.Models"
+                    xmlns:views="using:LogTail.UI.Views"
+                    xmlns:converters="using:Avalonia.Data.Converters"
                     x:Class="LogTail.UI.Views.MainWindow"
                     x:DataType="vm:MainWindowViewModel"
                     Title="{Binding WindowTitle}"
                     Width="900"
-                    Height="600">
+                    Height="600"
+                    DragDrop.AllowDrop="True">
   <DockPanel>
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
@@ -25,10 +28,17 @@
       </MenuItem>
     </Menu>
 
-    <Grid DockPanel.Dock="Bottom" Height="28" ColumnDefinitions="*,Auto" Margin="8,0">
-      <TextBlock Text="{Binding StatusMessage}"
-                 VerticalAlignment="Center"
-                 FontSize="11" />
+    <Grid DockPanel.Dock="Bottom" Height="40" ColumnDefinitions="*,Auto" Margin="8,0">
+      <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
+        <TextBlock Text="{Binding SelectedTabStatus}"
+                   FontSize="11"
+                   TextTrimming="CharacterEllipsis" />
+        <TextBlock Text="{Binding StatusMessage}"
+                   FontSize="10"
+                   Opacity="0.7"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   TextTrimming="CharacterEllipsis" />
+      </StackPanel>
       <ToggleSwitch Grid.Column="1"
                     IsChecked="{Binding AutoScroll, Mode=TwoWay}"
                     OnContent="Auto-scroll"
@@ -37,21 +47,64 @@
                     VerticalAlignment="Center" />
     </Grid>
 
-    <ListBox x:Name="LogListBox" ItemsSource="{Binding VisibleEvents}">
-      <ListBox.Styles>
-        <Style Selector="ListBoxItem">
-          <Setter Property="MinHeight" Value="0" />
-          <Setter Property="Padding" Value="6,1" />
-          <Setter Property="Margin" Value="0" />
-        </Style>
-      </ListBox.Styles>
-      <ListBox.ItemTemplate>
-        <DataTemplate DataType="models:EnrichedLogEvent">
-          <TextBlock Text="{Binding Raw.Line}"
-                     FontFamily="Cascadia Code,Consolas,Menlo,DejaVu Sans Mono,monospace"
-                     FontSize="12" />
+    <!-- TabControl -->
+    <TabControl x:Name="MainTabControl"
+                ItemsSource="{Binding Tabs}"
+                SelectedItem="{Binding SelectedTab}">
+      
+      <TabControl.ItemTemplate>
+        <DataTemplate>
+          <views:TabItemView />
         </DataTemplate>
-      </ListBox.ItemTemplate>
-    </ListBox>
+      </TabControl.ItemTemplate>
+      
+      <TabControl.ContentTemplate>
+        <DataTemplate x:DataType="vm:TabViewModel">
+          <ListBox ItemsSource="{Binding LogEvents}"
+                   SelectionMode="Multiple"
+                   Name="TabLogListBox"
+                   PointerPressed="OnTabLogPointerPressed">
+            <ListBox.Styles>
+              <Style Selector="ListBoxItem">
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="Padding" Value="6,1" />
+                <Setter Property="Margin" Value="0" />
+              </Style>
+            </ListBox.Styles>
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="models:EnrichedLogEvent">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding LineNumber, StringFormat={}{0}.}"
+                             Width="50"
+                             TextAlignment="Right"
+                             Margin="0,0,8,0"
+                             FontFamily="Cascadia Code,Consolas,Menlo,DejaVu Sans Mono,monospace"
+                             FontSize="12" />
+                  <TextBlock Text="{Binding Raw.Line}"
+                             FontFamily="Cascadia Code,Consolas,Menlo,DejaVu Sans Mono,monospace"
+                             FontSize="12" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DataTemplate>
+      </TabControl.ContentTemplate>
+      
+    </TabControl>
+
+    <!-- Empty State (when no tabs) -->
+    <Panel IsVisible="{Binding !Tabs.Count}"
+           HorizontalAlignment="Center"
+           VerticalAlignment="Center">
+      <StackPanel Spacing="8">
+        <TextBlock Text="Drop a log file here" 
+                   HorizontalAlignment="Center"
+                   FontSize="16" />
+        <TextBlock Text="or use File > Open"
+                   HorizontalAlignment="Center"
+                   Opacity="0.6" />
+      </StackPanel>
+    </Panel>
+
   </DockPanel>
 </rxui:ReactiveWindow>

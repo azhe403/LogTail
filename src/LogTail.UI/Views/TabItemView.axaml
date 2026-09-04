@@ -1,0 +1,17 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:LogTail.UI.ViewModels"
+             x:Class="LogTail.UI.Views.TabItemView"
+             x:DataType="vm:TabViewModel">
+    
+    <StackPanel Orientation="Horizontal" Spacing="4">
+        <TextBlock Text="{Binding FileName}" 
+                   VerticalAlignment="Center"
+                   Margin="8,0" />
+        <Button Classes="tab-close"
+                Content="X"
+                FontSize="10"
+                Padding="2,0" />
+    </StackPanel>
+    
+</UserControl>

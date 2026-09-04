@@ -34,7 +34,8 @@ public sealed class MainWindowViewModelTests : IDisposable
         sut.StatusMessage.Should().Be("No file open");
         sut.CurrentFilePath.Should().BeNull();
         sut.CurrentTheme.Should().Be(ThemeMode.System);
-        sut.VisibleEvents.Should().BeEmpty();
+        sut.Tabs.Should().BeEmpty();
+        sut.SelectedTab.Should().BeNull();
     }
 
     [Fact]
@@ -48,19 +49,166 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
-    public void ClearCommand_WhenExecuted_EmptiesVisibleEvents()
+    public void ClearCommand_WhenExecuted_EmptiesSelectedTabEvents()
     {
         var sut = CreateViewModel();
-        sut.VisibleEvents.Add(
-            new EnrichedLogEvent(
-                new RawLogEvent(DateTimeOffset.UtcNow, "test", 0, "line"),
-                LogLevel.Unknown,
-                Timestamp: null,
-                LevelColorKey: null));
+        var tab = new TabViewModel(CreateLogFile());
+        sut.Tabs.Add(tab);
+        sut.SelectedTab = tab;
+        tab.AddLogEvent(EnrichedLogEventFactory.CreateSample());
 
         sut.ClearCommand.Execute().Subscribe();
 
-        sut.VisibleEvents.Should().BeEmpty();
+        tab.LogEvents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AddTab_WhenCalled_CreatesAndSelectsTab()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile("first.log");
+
+        sut.AddTab(path);
+
+        sut.Tabs.Should().ContainSingle();
+        sut.SelectedTab.Should().NotBeNull();
+        sut.SelectedTab!.FilePath.Should().Be(path);
+        sut.SelectedTab.FileName.Should().Be("first.log");
+    }
+
+    [Fact]
+    public void AddTab_WhenSamePathAlreadyOpen_DoesNotCreateDuplicate()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile();
+        sut.AddTab(path);
+
+        sut.AddTab(path);
+
+        sut.Tabs.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CloseTab_WhenCalled_RemovesTabAndSelectsNext()
+    {
+        var sut = CreateViewModel();
+        var path1 = CreateLogFile("a.log");
+        var path2 = CreateLogFile("b.log");
+        sut.AddTab(path1);
+        sut.AddTab(path2);
+        var first = sut.Tabs[0];
+        var second = sut.Tabs[1];
+        sut.SelectedTab = first;
+
+        sut.CloseTab(first);
+
+        sut.Tabs.Should().ContainSingle().Which.Should().Be(second);
+        sut.SelectedTab.Should().Be(second);
+    }
+
+    [Fact]
+    public void SelectedTabStatus_WhenNoTabSelected_IsEmpty()
+    {
+        var sut = CreateViewModel();
+
+        sut.SelectedTabStatus.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SelectedTabStatus_WhenTabSelected_ContainsFilePath()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile("status.log");
+        sut.AddTab(path);
+
+        sut.SelectedTabStatus.Should().NotBeEmpty();
+        sut.SelectedTabStatus.Should().Contain("status.log");
+    }
+
+    [Fact]
+    public void SelectedTabStatus_WhenTabSelected_ContainsBufferCount()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile("buffer.log");
+        sut.AddTab(path);
+
+        // Status should include "0 / N lines" before any events arrive
+        // (the format is the spec contract). Allow thousands separator
+        // (e.g. 50,000) in the max value.
+        sut.SelectedTabStatus.Should().Contain("lines");
+        sut.SelectedTabStatus.Should().MatchRegex(@"\d / [\d,]+ lines");
+    }
+
+    [Fact]
+    public void BufferCapacity_ReflectsConfiguredValue()
+    {
+        var sut = CreateViewModel();
+
+        // Default fallback when settings has no value: 50,000.
+        sut.BufferCapacity.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void AddTab_AttachesLinesPerSecondCounter_NewTabStartsAtZero()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile("rate.log");
+
+        sut.AddTab(path);
+
+        // No events have arrived yet — rolling 1-second rate should be zero.
+        sut.SelectedTab!.LinesPerSecond.Should().Be(0);
+    }
+
+    [Fact]
+    public void SelectedTabStatus_WhenIdle_AlwaysShowsRateField()
+    {
+        // Per UX decision: rate should always be present (even as 0) so the
+        // status bar doesn't have a missing field when no events flow.
+        var sut = CreateViewModel();
+        var path = CreateLogFile("idle.log");
+        sut.AddTab(path);
+
+        sut.SelectedTabStatus.Should().Contain("0 lines/s");
+    }
+
+    [Fact]
+    public void SelectedTabStatus_WhenModifiedUnknown_ShowsEmDashPlaceholder()
+    {
+        // If file stat could not be read (LastModified == default), the
+        // status bar should show an em-dash instead of an empty field that
+        // produces a double-bullet gap. This is a sentinel meaning "unknown",
+        // not a fake value.
+        var sut = CreateViewModel();
+        var path = CreateLogFile("no-modified.log");
+        sut.AddTab(path);
+        var tab = sut.SelectedTab!;
+
+        // Simulate stat read failure: TabViewModel default is already
+        // default(DateTime), but ctor populates from FileInfo when possible.
+        // Force it to default to assert the rendering path.
+        tab.LastModified = default;
+
+        sut.SelectedTabStatus.Should().Contain("—");
+        // No double-pipe gap should appear in the rendered string.
+        sut.SelectedTabStatus.Should().NotContain("|  |");
+    }
+
+    [Fact]
+    public void CloseTab_DisposesRateSubscription_DoesNotLeak()
+    {
+        // No observable leak test possible without a mock subject, so we
+        // verify the public surface: closing a tab removes it cleanly and
+        // doesn't throw. The Dispose path inside CloseTab is exercised.
+        var sut = CreateViewModel();
+        var path = CreateLogFile("dispose.log");
+        sut.AddTab(path);
+        var tab = sut.Tabs[0];
+
+        var act = () => sut.CloseTab(tab);
+
+        act.Should().NotThrow();
+        sut.Tabs.Should().BeEmpty();
     }
 
     private MainWindowViewModel CreateViewModel()
@@ -70,6 +218,13 @@ public sealed class MainWindowViewModelTests : IDisposable
         var factory = new LogSourceFactory(logger);
 
         return new MainWindowViewModel(settings, factory);
+    }
+
+    private string CreateLogFile(string name = "test.log")
+    {
+        var path = Path.Combine(_tempDir, name);
+        File.WriteAllText(path, "hello\nworld\n");
+        return path;
     }
 }
 

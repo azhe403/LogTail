@@ -6,4 +6,7 @@ public sealed record EnrichedLogEvent(
     DateTimeOffset? Timestamp,
     string? LevelColorKey,
     bool IsHighlighted = false,
-    bool IsHidden = false);
+    bool IsHidden = false)
+{
+    public int LineNumber { get; init; }
+}
