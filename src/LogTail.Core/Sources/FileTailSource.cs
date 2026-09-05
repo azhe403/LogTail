@@ -22,6 +22,9 @@ public sealed class FileTailSource : ILogSource
     private Task? _readLoop;
     private volatile bool _forceReopen;
     private readonly StringBuilder _partialLineBuffer = new();
+    private long _fileSizeAtStart;
+    private bool _initialLogLoadedRaised;
+    private event Action? _initialLogLoaded;
 
     public FileTailSource(string filePath, TimeSpan pollInterval, ILogTailLogger logger)
     {
@@ -36,13 +39,20 @@ public sealed class FileTailSource : ILogSource
 
     public bool IsRunning { get; private set; }
 
+    public event Action? InitialLogLoaded
+    {
+        add => _initialLogLoaded += value;
+        remove => _initialLogLoaded -= value;
+    }
+
+    public long FileSize => _fileSizeAtStart;
+
     public async Task StartAsync(CancellationToken ct)
     {
         if (IsRunning) return;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-        // Open file from end (tail mode)
         _stream = new FileStream(
             _filePath,
             FileMode.Open,
@@ -52,6 +62,7 @@ public sealed class FileTailSource : ILogSource
             FileOptions.Asynchronous);
 
         _offset = 0;
+        _fileSizeAtStart = new FileInfo(_filePath).Length;
 
         // Set up FileSystemWatcher
         var dir = Path.GetDirectoryName(_filePath)!;
@@ -110,7 +121,21 @@ public sealed class FileTailSource : ILogSource
         _cts?.Dispose();
         _cts = null;
 
+        _partialLineBuffer.Clear();
+        _initialLogLoaded = null;
+        _initialLogLoadedRaised = false;
+
         _logger.Debug($"Stopped tailing: {_filePath}");
+    }
+
+    public void SeekToOffset(long offset)
+    {
+        // Jump past historical content so the source only emits appends that
+        // happened after the caller already loaded what it needed. Caller is
+        // responsible for marking the source as past the initial-load phase.
+        _offset = offset;
+        _initialLogLoadedRaised = true;
+        _partialLineBuffer.Clear();
     }
 
     public async ValueTask DisposeAsync()
@@ -145,8 +170,6 @@ public sealed class FileTailSource : ILogSource
 
     private void TriggerRead()
     {
-        // Signal the read loop to attempt a read.
-        // The read loop itself handles concurrency via Monitor.
         lock (_readLock)
         {
             Monitor.Pulse(_readLock);
@@ -175,7 +198,6 @@ public sealed class FileTailSource : ILogSource
                 }
                 else if (_stream == null || !File.Exists(_filePath))
                 {
-                    // File may have been deleted/rotated
                     await ReopenFileAsync().ConfigureAwait(false);
                     if (_stream == null)
                     {
@@ -200,6 +222,13 @@ public sealed class FileTailSource : ILogSource
 
                 if (_offset >= currentLength)
                 {
+                    // Phase 1 complete: first time we hit EOF after reading from 0
+                    if (!_initialLogLoadedRaised)
+                    {
+                        _initialLogLoadedRaised = true;
+                        _initialLogLoaded?.Invoke();
+                    }
+
                     continue;
                 }
 
@@ -218,8 +247,11 @@ public sealed class FileTailSource : ILogSource
                     var combined = _partialLineBuffer.ToString();
                     var lines = combined.Split(["\r\n", "\n"], StringSplitOptions.None);
 
-                    // The last item is either empty (if combined ended with a newline)
-                    // or an incomplete partial line (which we retain in the buffer).
+                    // Emit completed lines. The last item is either empty (if
+                    // combined ended with a newline) or an incomplete partial
+                    // line (which we retain in the buffer).
+                    bool isHistorical = !_initialLogLoadedRaised;
+
                     for (int i = 0; i < lines.Length - 1; i++)
                     {
                         var line = lines[i];
@@ -229,7 +261,8 @@ public sealed class FileTailSource : ILogSource
                                 ReadAt: DateTimeOffset.UtcNow,
                                 SourceId: _filePath,
                                 FileOffset: _offset,
-                                Line: line));
+                                Line: line,
+                                IsHistorical: isHistorical));
                         }
                     }
 

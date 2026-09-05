@@ -90,12 +90,10 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
             })
             .DisposeWith(tabDisposables);
 
-        // Detect manual scrolling (scroll up disables auto-scroll) for this tab's ListBox.
         Dispatcher.UIThread.Post(() =>
         {
-            var listBox = this.FindControl<TabControl>("MainTabControl")?
-                .FindDescendantOfType<ListBox>();
-            var scrollViewer = listBox?.FindDescendantOfType<ScrollViewer>();
+            var scrollViewer = this.FindControl<TabControl>("MainTabControl")?
+                .FindDescendantOfType<ScrollViewer>();
             if (scrollViewer == null)
             {
                 return;
@@ -159,9 +157,9 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         _isProgrammaticScroll = true;
         try
         {
-            var listBox = this.FindControl<TabControl>("MainTabControl")?
-                .FindDescendantOfType<ListBox>();
-            listBox?.ScrollIntoView(ViewModel.SelectedTab.LogEvents.Count - 1);
+            var scrollViewer = this.FindControl<TabControl>("MainTabControl")?
+                .FindDescendantOfType<ScrollViewer>();
+            scrollViewer?.ScrollToEnd();
         }
         finally
         {

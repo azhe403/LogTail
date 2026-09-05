@@ -3,7 +3,10 @@ using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Reactive;
+using System.Reactive.Disposables;
 using System.Reactive.Linq;
+using System.Reactive.Subjects;
+using Avalonia.Threading;
 using LogTail.Core.Buffer;
 using LogTail.Core.Models;
 using LogTail.Core.Persistence;
@@ -93,7 +96,13 @@ public sealed class MainWindowViewModel : ReactiveObject
     }
 
     private IDisposable? _eventsSubscription;
+    private Action? _onInitialLoadedHandler;
+    private readonly List<EnrichedLogEvent> _pendingHistoricalEvents = new();
+    private readonly object _historicalLock = new();
+    private volatile bool _historicalFlushed;
     private readonly Dictionary<TabViewModel, IDisposable> _rateSubscriptions = new();
+    private readonly Dictionary<TabViewModel, Queue<DateTimeOffset>> _rateWindows = new();
+    private readonly IDisposable _rateTimer;
 
     public MainWindowViewModel(SettingsStore settings, ILogSourceFactory sourceFactory)
     {
@@ -103,7 +112,11 @@ public sealed class MainWindowViewModel : ReactiveObject
         // Restore settings.
         var loaded = _settings.Load();
         CurrentTheme = loaded.Theme;
-        _buffer = new RingBuffer<EnrichedLogEvent>(loaded.BufferCapacity > 0 ? loaded.BufferCapacity : 50_000);
+        var initial = loaded.BufferCapacity > 0 ? loaded.BufferCapacity : 50_000;
+        var max = loaded.MaxBufferCapacity >= initial ? loaded.MaxBufferCapacity : initial;
+        _buffer = new RingBuffer<EnrichedLogEvent>(initial, max);
+        _buffer.Grew += (_, newCapacity) =>
+            Dispatcher.UIThread.Post(() => BufferCapacity = newCapacity);
         BufferCapacity = _buffer.Capacity;
 
         OpenFileCommand = ReactiveCommand.CreateFromTask(OpenFileAsync);
@@ -135,6 +148,11 @@ public sealed class MainWindowViewModel : ReactiveObject
             .Switch()
             .ToProperty(this, x => x.SelectedTabStatus);
 
+        // Decay rate to zero when idle: prune 1-second windows every second.
+        _rateTimer = Observable.Interval(TimeSpan.FromSeconds(1))
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(_ => PruneRates());
+
         // Drive tailing from the selected tab: switching tabs stops the old source
         // and starts tailing the newly-selected file into that tab's LogEvents.
         this.WhenAnyValue(x => x.SelectedTab)
@@ -148,6 +166,20 @@ public sealed class MainWindowViewModel : ReactiveObject
                 {
                     await StopCurrentSourceAsync();
                     StatusMessage = "No file open";
+                    return;
+                }
+
+                if (tab.LogEvents.Count > 0)
+                {
+                    StatusMessage = $"Tailing: {Path.GetFileName(tab.FilePath)}";
+                    try
+                    {
+                        await StartTailingAsync(tab, resumeOnly: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        StatusMessage = $"Error: {ex.Message}";
+                    }
                     return;
                 }
 
@@ -235,24 +267,64 @@ public sealed class MainWindowViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// Wires a 1-second rolling rate counter to <paramref name="tab"/>. Counts
-    /// CollectionChanged notifications from <c>tab.LogEvents</c> per second and
-    /// pushes the value to <c>tab.LinesPerSecond</c>. Subscription is disposed
-    /// by <see cref="CloseTab"/>.
+    /// Tracks a 1-second rolling rate per tab based on added lines (not
+    /// CollectionChanged events, so eviction never inflates the rate and
+    /// bulk Reset notifications stay correct). Cleanup happens in
+    /// <see cref="CloseTab"/>.
     /// </summary>
     private void AttachLinesPerSecondCounter(TabViewModel tab)
     {
-        var subscription = Observable.FromEventPattern<
-                NotifyCollectionChangedEventHandler,
-                NotifyCollectionChangedEventArgs>(
-                handler => tab.LogEvents.CollectionChanged += handler,
-                handler => tab.LogEvents.CollectionChanged -= handler)
-            .Buffer(TimeSpan.FromSeconds(1))
-            .Select(events => (double)events.Count)
-            .ObserveOn(RxApp.MainThreadScheduler)
-            .Subscribe(rate => tab.LinesPerSecond = rate);
+        if (!_rateWindows.ContainsKey(tab))
+        {
+            _rateWindows[tab] = new Queue<DateTimeOffset>();
+        }
 
-        _rateSubscriptions[tab] = subscription;
+        _rateSubscriptions[tab] = Disposable.Create(() => _rateWindows.Remove(tab));
+    }
+
+    private void RecordLinesForRate(TabViewModel tab, int addedCount)
+    {
+        if (addedCount <= 0)
+        {
+            return;
+        }
+
+        if (!_rateWindows.TryGetValue(tab, out var window))
+        {
+            window = new Queue<DateTimeOffset>();
+            _rateWindows[tab] = window;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < addedCount; i++)
+        {
+            window.Enqueue(now);
+        }
+
+        PruneWindow(window, now);
+        tab.LinesPerSecond = window.Count;
+    }
+
+    private void PruneRates()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (tab, window) in _rateWindows.ToArray())
+        {
+            var before = window.Count;
+            PruneWindow(window, now);
+            if (window.Count != before)
+            {
+                tab.LinesPerSecond = window.Count;
+            }
+        }
+    }
+
+    private static void PruneWindow(Queue<DateTimeOffset> window, DateTimeOffset now)
+    {
+        while (window.Count > 0 && (now - window.Peek()) > TimeSpan.FromSeconds(1))
+        {
+            window.Dequeue();
+        }
     }
 
     public TabViewModel? FindTabByPath(string filePath)
@@ -265,10 +337,22 @@ public sealed class MainWindowViewModel : ReactiveObject
     {
         if (CurrentSource != null)
         {
+            if (_onInitialLoadedHandler != null)
+            {
+                CurrentSource.InitialLogLoaded -= _onInitialLoadedHandler;
+                _onInitialLoadedHandler = null;
+            }
+
             await CurrentSource.StopAsync();
             _eventsSubscription?.Dispose();
             _eventsSubscription = null;
             CurrentSource = null;
+        }
+
+        lock (_historicalLock)
+        {
+            _pendingHistoricalEvents.Clear();
+            _historicalFlushed = false;
         }
 
         // Mark the previously active tab as no longer tailing. Null-check
@@ -280,7 +364,7 @@ public sealed class MainWindowViewModel : ReactiveObject
         }
     }
 
-    private async Task StartTailingAsync(TabViewModel tab)
+    private async Task StartTailingAsync(TabViewModel tab, bool resumeOnly = false)
     {
         await StopCurrentSourceAsync();
 
@@ -300,18 +384,77 @@ public sealed class MainWindowViewModel : ReactiveObject
         catch (UnauthorizedAccessException) { }
 
         tab.IsTailing = true;
-        tab.Status = "tailing";
+        tab.Status = resumeOnly ? "tailing" : "loading";
 
         var source = _sourceFactory.CreateFileSource(tab.FilePath);
         CurrentSource = source;
 
+        if (resumeOnly)
+        {
+            // Tab already has its historical snapshot — skip re-reading the
+            // whole file. Start the source from the existing end of file so
+            // only new appends come in as live events.
+            var resumeOffset = new FileInfo(tab.FilePath).Length;
+            source.SeekToOffset(resumeOffset);
+        }
+
+        _historicalFlushed = false;
+
+        _onInitialLoadedHandler = () =>
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                OnInitialLogLoaded();
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(() => OnInitialLogLoaded());
+            }
+        };
+        source.InitialLogLoaded += _onInitialLoadedHandler;
+
         _eventsSubscription = source.Events
-            .Select(raw => Enrich.Transform(raw))
+            .Select(raw => (Raw: raw, Enriched: Enrich.Transform(raw)))
             .Buffer(TimeSpan.FromMilliseconds(50), 200)
             .Where(batch => batch.Count > 0)
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(
-                onNext: OnNewEventsBatch,
+                onNext: batch =>
+                {
+                    if (resumeOnly)
+                    {
+                        OnNewEventsBatch(batch.Select(b => b.Enriched).ToList());
+                        return;
+                    }
+
+                    bool isHistoricalBatch = batch[0].Raw.IsHistorical;
+                    if (isHistoricalBatch)
+                    {
+                        lock (_historicalLock)
+                        {
+                            foreach (var (_, enriched) in batch)
+                            {
+                                _pendingHistoricalEvents.Add(enriched);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (!_historicalFlushed)
+                        {
+                            List<EnrichedLogEvent> snapshot;
+                            lock (_historicalLock)
+                            {
+                                snapshot = new List<EnrichedLogEvent>(_pendingHistoricalEvents);
+                            }
+                            if (snapshot.Count > 0)
+                            {
+                                FlushPendingHistorical(snapshot);
+                            }
+                        }
+                        OnNewEventsBatch(batch.Select(b => b.Enriched).ToList());
+                    }
+                },
                 onError: ex =>
                 {
                     tab.IsTailing = false;
@@ -322,6 +465,67 @@ public sealed class MainWindowViewModel : ReactiveObject
         await source.StartAsync(CancellationToken.None);
     }
 
+    private void FlushPendingHistorical(List<EnrichedLogEvent> snapshot)
+    {
+        var tab = SelectedTab;
+        if (tab is null)
+        {
+            return;
+        }
+
+        tab.Status = "tailing";
+
+        var excess = (tab.LogEvents.Count + snapshot.Count) - _buffer.Capacity;
+        if (excess > 0)
+        {
+            tab.EvictFromFront(excess);
+        }
+
+        foreach (var item in snapshot)
+        {
+            _buffer.Add(item);
+        }
+
+        tab.AddLogEvents(snapshot);
+        RecordLinesForRate(tab, snapshot.Count);
+
+        lock (_historicalLock)
+        {
+            _pendingHistoricalEvents.Clear();
+            _historicalFlushed = true;
+        }
+    }
+
+    private void OnInitialLogLoaded()
+    {
+        var tab = SelectedTab;
+
+        List<EnrichedLogEvent> snapshot;
+        lock (_historicalLock)
+        {
+            if (_historicalFlushed)
+            {
+                if (tab != null)
+                {
+                    tab.Status = "tailing";
+                }
+                return;
+            }
+            snapshot = new List<EnrichedLogEvent>(_pendingHistoricalEvents);
+        }
+
+        if (tab is null)
+        {
+            lock (_historicalLock)
+            {
+                _historicalFlushed = true;
+            }
+            return;
+        }
+
+        FlushPendingHistorical(snapshot);
+    }
+
     private void OnNewEventsBatch(IList<EnrichedLogEvent> batch)
     {
         if (batch.Count == 0) return;
@@ -329,27 +533,21 @@ public sealed class MainWindowViewModel : ReactiveObject
         var tab = SelectedTab;
         if (tab == null) return;
 
-        int excess = (tab.LogEvents.Count + batch.Count) - _buffer.Capacity;
+        // Bulk evict + bulk append: 2 UI notifications per batch instead of
+        // ~2*batch.Count. Avoids O(n*m) RemoveAt(0) loop at 50k capacity.
+        var excess = (tab.LogEvents.Count + batch.Count) - _buffer.Capacity;
         if (excess > 0)
         {
-            if (excess >= tab.LogEvents.Count)
-            {
-                tab.LogEvents.Clear();
-            }
-            else
-            {
-                for (int i = 0; i < excess; i++)
-                {
-                    tab.LogEvents.RemoveAt(0);
-                }
-            }
+            tab.EvictFromFront(excess);
         }
 
         foreach (var item in batch)
         {
             _buffer.Add(item);
-            tab.AddLogEvent(item);
         }
+
+        tab.AddLogEvents(batch);
+        RecordLinesForRate(tab, batch.Count);
     }
 
     private void Clear()
@@ -397,4 +595,5 @@ public sealed class MainWindowViewModel : ReactiveObject
         CurrentTheme = mode;
         _settings.Update(s => s with { Theme = mode });
     }
+
 }

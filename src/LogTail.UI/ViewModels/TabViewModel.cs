@@ -1,14 +1,16 @@
-using System.Collections.ObjectModel;
 using LogTail.Core.Models;
+using LogTail.UI.Collections;
 using ReactiveUI;
 
 namespace LogTail.UI.ViewModels;
 
 public sealed class TabViewModel : ReactiveObject
 {
+    private const int MaxLineLength = 4000;
     private string _fileName = string.Empty;
     private string _filePath = string.Empty;
     private string _status = "Idle";
+    private bool _isLoading;
     private int _lineCount;
     private long _fileSize;
     private DateTime _lastModified;
@@ -30,10 +32,20 @@ public sealed class TabViewModel : ReactiveObject
     public string Status
     {
         get => _status;
-        set => this.RaiseAndSetIfChanged(ref _status, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _status, value);
+            IsLoading = string.Equals(value, "loading", StringComparison.OrdinalIgnoreCase);
+        }
     }
 
-    public ObservableCollection<EnrichedLogEvent> LogEvents { get; } = new();
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set => this.RaiseAndSetIfChanged(ref _isLoading, value);
+    }
+
+    public BulkObservableCollection<EnrichedLogEvent> LogEvents { get; } = new();
 
     public int LineCount
     {
@@ -96,8 +108,47 @@ public sealed class TabViewModel : ReactiveObject
 
     public void AddLogEvent(EnrichedLogEvent logEvent)
     {
-        var numberedEvent = logEvent with { LineNumber = LineCount + 1 };
+        var trimmed = TrimLineIfNeeded(logEvent);
+        var numberedEvent = trimmed with { LineNumber = LineCount + 1 };
         LogEvents.Add(numberedEvent);
+        LineCount = LogEvents.Count;
+    }
+
+    /// <summary>
+    /// Append a batch with a single UI notification. Assigns line numbers
+    /// sequentially and caps absurdly long lines so layout stays cheap.
+    /// </summary>
+    public void AddLogEvents(IList<EnrichedLogEvent> batch)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
+        var numbered = new List<EnrichedLogEvent>(batch.Count);
+        var nextNumber = LineCount + 1;
+        foreach (var item in batch)
+        {
+            numbered.Add(TrimLineIfNeeded(item) with { LineNumber = nextNumber });
+            nextNumber++;
+        }
+
+        LogEvents.AddRange(numbered);
+        LineCount = LogEvents.Count;
+    }
+
+    /// <summary>
+    /// Evict count oldest items with a single UI notification.
+    /// </summary>
+    public void EvictFromFront(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        LogEvents.RemoveFromFront(count);
         LineCount = LogEvents.Count;
     }
 
@@ -105,5 +156,17 @@ public sealed class TabViewModel : ReactiveObject
     {
         LogEvents.Clear();
         LineCount = 0;
+    }
+
+    private static EnrichedLogEvent TrimLineIfNeeded(EnrichedLogEvent logEvent)
+    {
+        var line = logEvent.Raw.Line;
+        if (line.Length <= MaxLineLength)
+        {
+            return logEvent;
+        }
+
+        var trimmedRaw = logEvent.Raw with { Line = string.Concat(line.AsSpan(0, MaxLineLength), "…") };
+        return logEvent with { Raw = trimmedRaw };
     }
 }

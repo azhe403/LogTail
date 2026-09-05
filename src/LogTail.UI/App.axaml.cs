@@ -50,11 +50,13 @@ public partial class App : Application
 
             // Optional headless demo bypass: when LOGTAIL_AUTO_OPEN_FILE is set,
             // auto-tail that file at startup. No effect in normal use.
+            // Bypass OpenFileCommand: it triggers ShowOpenFileDialog which has no
+            // handler at this point (MainWindow.WhenActivated hasn't run yet).
             var autoOpen = Environment.GetEnvironmentVariable("LOGTAIL_AUTO_OPEN_FILE");
             if (!string.IsNullOrEmpty(autoOpen) && System.IO.File.Exists(autoOpen))
             {
                 viewModel.CurrentFilePath = autoOpen;
-                viewModel.OpenFileCommand.Execute().Subscribe();
+                _ = viewModel.OpenFileAndAddTabAsync(autoOpen);
             }
 
             var mainWindow = new MainWindow

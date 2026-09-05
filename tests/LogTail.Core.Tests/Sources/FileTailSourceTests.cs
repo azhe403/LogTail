@@ -154,4 +154,171 @@ public sealed class FileTailSourceTests : IAsyncLifetime
 
         sut.DisplayName.Should().Be("mylog.log");
     }
+
+    [Fact]
+    public async Task StartAsync_WhenFileHasHistoricalLines_EmitsThemWithIsHistoricalTrue()
+    {
+        var filePath = Path.Combine(_tempDir, "historical.log");
+        await File.WriteAllTextAsync(filePath, "line1\nline2\nline3\nline4\nline5\n");
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        var events = new List<RawLogEvent>();
+        using var sub = sut.Events.Subscribe(e => events.Add(e));
+
+        await sut.StartAsync(CancellationToken.None);
+
+        var sawAll = await WaitUntilAsync(() => events.Count >= 5);
+
+        await sut.StopAsync();
+
+        sawAll.Should().BeTrue();
+        events.Should().HaveCount(5);
+        events.Should().OnlyContain(e => e.IsHistorical);
+    }
+
+    [Fact]
+    public async Task StartAsync_AfterInitialLoad_RaisesInitialLogLoadedEventOnce()
+    {
+        var filePath = Path.Combine(_tempDir, "initial-loaded.log");
+        await File.WriteAllTextAsync(filePath, "line1\nline2\nline3\n");
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        int initialLogLoadedCount = 0;
+        sut.InitialLogLoaded += () => Interlocked.Increment(ref initialLogLoadedCount);
+
+        await sut.StartAsync(CancellationToken.None);
+
+        var raised = await WaitUntilAsync(() => initialLogLoadedCount > 0);
+
+        await sut.StopAsync();
+
+        raised.Should().BeTrue();
+        initialLogLoadedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StartAsync_AfterInitialLoad_AppendedLinesHaveIsHistoricalFalse()
+    {
+        var filePath = Path.Combine(_tempDir, "appended-historical.log");
+        await File.WriteAllTextAsync(filePath, "initial1\ninitial2\n");
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        var events = new List<RawLogEvent>();
+        using var sub = sut.Events.Subscribe(e => events.Add(e));
+
+        var loadedTcs = new TaskCompletionSource<bool>();
+        sut.InitialLogLoaded += () => loadedTcs.TrySetResult(true);
+
+        await sut.StartAsync(CancellationToken.None);
+
+        var loaded = await WaitUntilAsync(() => loadedTcs.Task.IsCompleted);
+        loaded.Should().BeTrue();
+
+        await File.AppendAllTextAsync(filePath, "new-appended-line\n");
+
+        var sawNew = await WaitUntilAsync(() => events.Any(e => e.Line == "new-appended-line"));
+
+        await sut.StopAsync();
+
+        sawNew.Should().BeTrue();
+        var initialEvents = events.Where(e => e.Line.StartsWith("initial")).ToList();
+        var newEvents = events.Where(e => e.Line == "new-appended-line").ToList();
+
+        initialEvents.Should().OnlyContain(e => e.IsHistorical);
+        newEvents.Should().OnlyContain(e => !e.IsHistorical);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenFileRotated_DoesNotRaiseInitialLogLoadedAgain()
+    {
+        var filePath = Path.Combine(_tempDir, "rotate-event.log");
+        await File.WriteAllTextAsync(filePath, "before-rotate\n");
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        int initialLogLoadedCount = 0;
+        sut.InitialLogLoaded += () => Interlocked.Increment(ref initialLogLoadedCount);
+
+        await sut.StartAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => initialLogLoadedCount == 1);
+
+        // Rotate file: delete and recreate
+        File.Delete(filePath);
+        await File.AppendAllTextAsync(filePath, "after-rotate\n");
+
+        // Wait to allow rotation detection and read
+        await Task.Delay(300);
+
+        await sut.StopAsync();
+
+        initialLogLoadedCount.Should().Be(1, "rotation should not re-raise InitialLogLoaded");
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenFileEmpty_ImmediatelyRaisesInitialLogLoaded()
+    {
+        var filePath = Path.Combine(_tempDir, "empty.log");
+        await File.WriteAllTextAsync(filePath, "");
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        int initialLogLoadedCount = 0;
+        sut.InitialLogLoaded += () => Interlocked.Increment(ref initialLogLoadedCount);
+
+        await sut.StartAsync(CancellationToken.None);
+
+        var raised = await WaitUntilAsync(() => initialLogLoadedCount > 0);
+
+        await sut.StopAsync();
+
+        raised.Should().BeTrue();
+        initialLogLoadedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FileSize_AfterStart_ReturnsCorrectSize()
+    {
+        var filePath = Path.Combine(_tempDir, "size.log");
+        var content = new string('a', 1024);
+        await File.WriteAllTextAsync(filePath, content);
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        await sut.StartAsync(CancellationToken.None);
+
+        sut.FileSize.Should().Be(1024);
+
+        await sut.StopAsync();
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenCalled_AllowsReuseOfSource()
+    {
+        var filePath = Path.Combine(_tempDir, "reuse.log");
+        await File.WriteAllTextAsync(filePath, "line1\n");
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger());
+
+        int run1Count = 0;
+        sut.InitialLogLoaded += () => Interlocked.Increment(ref run1Count);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => run1Count == 1);
+        await sut.StopAsync();
+
+        run1Count.Should().Be(1);
+
+        int run2Count = 0;
+        sut.InitialLogLoaded += () => Interlocked.Increment(ref run2Count);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => run2Count == 1);
+        await sut.StopAsync();
+
+        run2Count.Should().Be(1);
+    }
 }

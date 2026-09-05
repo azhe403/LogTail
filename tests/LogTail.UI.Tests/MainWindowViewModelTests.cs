@@ -7,6 +7,7 @@ using Xunit;
 
 namespace LogTail.UI.Tests;
 
+[Collection("MainWindowViewModelTests")]
 public sealed class MainWindowViewModelTests : IDisposable
 {
     private readonly string _tempDir;
@@ -209,6 +210,114 @@ public sealed class MainWindowViewModelTests : IDisposable
 
         act.Should().NotThrow();
         sut.Tabs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task StartTailingAsync_AfterInitialLogLoaded_RendersAllHistoricalEvents()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile("hist-render.log");
+        var lines = Enumerable.Range(1, 20).Select(i => $"line {i}").ToList();
+        File.WriteAllLines(path, lines);
+
+        sut.AddTab(path);
+
+        // Wait until initial load finishes and renders to the tab
+        var rendered = await WaitUntilAsync(() => sut.SelectedTab?.LogEvents.Count >= 20, TimeSpan.FromSeconds(30));
+
+        rendered.Should().BeTrue();
+        sut.SelectedTab!.LogEvents.Count.Should().Be(20);
+        sut.SelectedTab.Status.Should().Be("tailing");
+    }
+
+    [Fact]
+    public async Task StartTailingAsync_WithManyHistoricalLines_RendersAll()
+    {
+        // Repro: loading stuck on large files (InitialLogLoaded races the UI buffer).
+        var sut = CreateViewModel();
+        var path = Path.Combine(_tempDir, "many.log");
+        var lines = Enumerable.Range(1, 50_000)
+            .Select(i => $"line {i} - some padding to make lines realistic and longer than a few chars")
+            .ToList();
+        File.WriteAllLines(path, lines);
+
+        sut.AddTab(path);
+
+        var rendered = await WaitUntilAsync(() => sut.SelectedTab?.LogEvents.Count >= 50_000, TimeSpan.FromSeconds(60));
+
+        rendered.Should().BeTrue();
+        sut.SelectedTab!.LogEvents.Count.Should().Be(50_000);
+        sut.SelectedTab.Status.Should().Be("tailing");
+    }
+
+    [Fact]
+    public async Task StartTailingAsync_WithVeryManyHistoricalLines_RendersAll()
+    {
+        // Regression: 1M lines reproduces the 406MB opencode.log case where
+        // ObserveOn queue backlog + 50ms timer caused event loss.
+        var sut = CreateViewModel();
+        var path = Path.Combine(_tempDir, "huge.log");
+        var lines = Enumerable.Range(1, 1_000_000)
+            .Select(i => $"line {i} - padding to make line realistic in size for tailing")
+            .ToList();
+        File.WriteAllLines(path, lines);
+
+        sut.AddTab(path);
+
+        var rendered = await WaitUntilAsync(
+            () => sut.SelectedTab?.LogEvents.Count >= 1_000_000,
+            TimeSpan.FromSeconds(480));
+
+        rendered.Should().BeTrue($"expected 1M lines rendered, got {sut.SelectedTab?.LogEvents.Count}");
+        sut.SelectedTab!.Status.Should().Be("tailing");
+    }
+
+    [Fact]
+    public async Task StartTailingAsync_AfterInitialLoad_AppendedLinesRenderLive()
+    {
+        var sut = CreateViewModel();
+        var path = CreateLogFile("live-render.log");
+        File.WriteAllText(path, "hist1\nhist2\n");
+
+        sut.AddTab(path);
+
+        var histLoaded = await WaitUntilAsync(() => sut.SelectedTab?.LogEvents.Count == 2, TimeSpan.FromSeconds(30));
+        histLoaded.Should().BeTrue();
+
+        await File.AppendAllTextAsync(path, "live1\n");
+
+        var liveLoaded = await WaitUntilAsync(() => sut.SelectedTab?.LogEvents.Count == 3, TimeSpan.FromSeconds(30));
+        liveLoaded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task StopCurrentSourceAsync_WhenSwitchingTabs_ClearsPendingBuffer()
+    {
+        var sut = CreateViewModel();
+        var path1 = CreateLogFile("tab1.log");
+        var path2 = CreateLogFile("tab2.log");
+
+        sut.AddTab(path1);
+        await WaitUntilAsync(() => sut.SelectedTab?.Status == "tailing");
+
+        sut.AddTab(path2);
+        await WaitUntilAsync(() => sut.SelectedTab?.Status == "tailing");
+
+        sut.SelectedTab!.FilePath.Should().Be(path2);
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> predicate, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        while (DateTime.UtcNow < deadline)
+        {
+            if (predicate())
+            {
+                return true;
+            }
+            await Task.Delay(25);
+        }
+        return false;
     }
 
     private MainWindowViewModel CreateViewModel()

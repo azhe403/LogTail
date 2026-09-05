@@ -62,3 +62,5 @@ coverage*/
 ## Local Temporary & Tooling Artifacts
 .tmp/
 *.tmp
+
+.omo
