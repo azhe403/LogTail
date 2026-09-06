@@ -62,7 +62,10 @@ public sealed class FileTailSource : ILogSource
             bufferSize: 4096,
             FileOptions.Asynchronous);
 
-        _offset = 0;
+        if (!_initialLogLoadedRaised)
+        {
+            _offset = 0;
+        }
         _fileSizeAtStart = new FileInfo(_filePath).Length;
 
         // Set up FileSystemWatcher
