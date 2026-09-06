@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reactive;
@@ -8,6 +9,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Avalonia.Threading;
 using LogTail.Core.Buffer;
+using LogTail.Core.Logging;
 using LogTail.Core.Models;
 using LogTail.Core.Persistence;
 using LogTail.Core.Pipeline;
@@ -79,6 +81,7 @@ public sealed class MainWindowViewModel : ReactiveObject
 
     private readonly SettingsStore _settings;
     private readonly ILogSourceFactory _sourceFactory;
+    private readonly ILogTailLogger? _logger;
     private readonly RingBuffer<EnrichedLogEvent> _buffer;
     private ILogSource? _source;
 
@@ -104,10 +107,11 @@ public sealed class MainWindowViewModel : ReactiveObject
     private readonly Dictionary<TabViewModel, Queue<DateTimeOffset>> _rateWindows = new();
     private readonly IDisposable _rateTimer;
 
-    public MainWindowViewModel(SettingsStore settings, ILogSourceFactory sourceFactory)
+    public MainWindowViewModel(SettingsStore settings, ILogSourceFactory sourceFactory, ILogTailLogger? logger = null)
     {
         _settings = settings;
         _sourceFactory = sourceFactory;
+        _logger = logger;
 
         // Restore settings.
         var loaded = _settings.Load();
@@ -355,8 +359,6 @@ public sealed class MainWindowViewModel : ReactiveObject
             _historicalFlushed = false;
         }
 
-        // Mark the previously active tab as no longer tailing. Null-check
-        // SelectedTab because this can run during teardown.
         var stopped = SelectedTab;
         if (stopped is not null)
         {
@@ -428,7 +430,7 @@ public sealed class MainWindowViewModel : ReactiveObject
                     }
 
                     bool isHistoricalBatch = batch[0].Raw.IsHistorical;
-                    if (isHistoricalBatch)
+                    if (isHistoricalBatch && !_historicalFlushed)
                     {
                         lock (_historicalLock)
                         {
@@ -473,6 +475,7 @@ public sealed class MainWindowViewModel : ReactiveObject
             return;
         }
 
+        var sw = Stopwatch.StartNew();
         tab.Status = "tailing";
 
         var excess = (tab.LogEvents.Count + snapshot.Count) - _buffer.Capacity;
@@ -494,6 +497,9 @@ public sealed class MainWindowViewModel : ReactiveObject
             _pendingHistoricalEvents.Clear();
             _historicalFlushed = true;
         }
+
+        sw.Stop();
+        _logger?.Info($"[InitialLoad:UI] File: '{Path.GetFileName(tab.FilePath)}', Lines Rendered: {snapshot.Count:N0}, UI Flush Time: {sw.ElapsedMilliseconds} ms ({sw.Elapsed.TotalSeconds:F2}s)");
     }
 
     private void OnInitialLogLoaded()
@@ -503,14 +509,6 @@ public sealed class MainWindowViewModel : ReactiveObject
         List<EnrichedLogEvent> snapshot;
         lock (_historicalLock)
         {
-            if (_historicalFlushed)
-            {
-                if (tab != null)
-                {
-                    tab.Status = "tailing";
-                }
-                return;
-            }
             snapshot = new List<EnrichedLogEvent>(_pendingHistoricalEvents);
         }
 
@@ -523,7 +521,10 @@ public sealed class MainWindowViewModel : ReactiveObject
             return;
         }
 
-        FlushPendingHistorical(snapshot);
+        if (snapshot.Count > 0)
+        {
+            FlushPendingHistorical(snapshot);
+        }
     }
 
     private void OnNewEventsBatch(IList<EnrichedLogEvent> batch)

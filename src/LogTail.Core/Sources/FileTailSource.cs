@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Text;
@@ -79,10 +80,10 @@ public sealed class FileTailSource : ILogSource
 
         _watcher.EnableRaisingEvents = true;
 
-        // Poll fallback
+        await DrainInitialContentAsync(_cts.Token).ConfigureAwait(false);
+
         _pollTimer = new Timer(PollCallback, null, _pollInterval, _pollInterval);
 
-        // Read loop
         _readLoop = Task.Run(() => ReadLoopAsync(_cts.Token), _cts.Token);
 
         IsRunning = true;
@@ -176,6 +177,85 @@ public sealed class FileTailSource : ILogSource
         }
     }
 
+    private async Task DrainInitialContentAsync(CancellationToken ct)
+    {
+        if (_initialLogLoadedRaised || _stream == null || !File.Exists(_filePath))
+        {
+            return;
+        }
+
+        var sw = Stopwatch.StartNew();
+        var currentLength = new FileInfo(_filePath).Length;
+        var totalLinesEmitted = 0;
+
+        if (_stream.Position != _offset)
+        {
+            _stream.Seek(_offset, SeekOrigin.Begin);
+        }
+
+        while (_offset < currentLength && !ct.IsCancellationRequested)
+        {
+            var bufferSize = (int)Math.Min(currentLength - _offset, 1024 * 1024);
+            var buffer = new byte[bufferSize];
+
+            int bytesRead = await _stream.ReadAsync(buffer, 0, bufferSize, ct).ConfigureAwait(false);
+            if (bytesRead <= 0)
+            {
+                break;
+            }
+
+            _offset += bytesRead;
+            var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            _partialLineBuffer.Append(text);
+
+            var combined = _partialLineBuffer.ToString();
+            var lines = combined.Split(["\r\n", "\n"], StringSplitOptions.None);
+
+            for (int i = 0; i < lines.Length - 1; i++)
+            {
+                var line = lines[i];
+                if (!string.IsNullOrEmpty(line))
+                {
+                    totalLinesEmitted++;
+                    _events.OnNext(new RawLogEvent(
+                        ReadAt: DateTimeOffset.UtcNow,
+                        SourceId: _filePath,
+                        FileOffset: _offset,
+                        Line: line,
+                        IsHistorical: true));
+                }
+            }
+
+            if (lines.Length > 0 && !string.IsNullOrEmpty(lines[^1]) && _offset >= currentLength)
+            {
+                totalLinesEmitted++;
+                _events.OnNext(new RawLogEvent(
+                    ReadAt: DateTimeOffset.UtcNow,
+                    SourceId: _filePath,
+                    FileOffset: _offset,
+                    Line: lines[^1],
+                    IsHistorical: true));
+                _partialLineBuffer.Clear();
+            }
+            else
+            {
+                _partialLineBuffer.Clear();
+                _partialLineBuffer.Append(lines[^1]);
+            }
+        }
+
+        sw.Stop();
+        _logger.Info($"[InitialLoad:Core] File: '{Path.GetFileName(_filePath)}', Size: {currentLength:N0} bytes, Lines: {totalLinesEmitted:N0}, Read Time: {sw.ElapsedMilliseconds} ms ({sw.Elapsed.TotalSeconds:F2}s)");
+
+        _initialLogLoadedRaised = true;
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(100).ConfigureAwait(false);
+            _initialLogLoaded?.Invoke();
+        });
+    }
+
     private async Task ReadLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -207,7 +287,6 @@ public sealed class FileTailSource : ILogSource
 
                 var currentLength = new FileInfo(_filePath).Length;
 
-                // Truncation detection: file shrunk below our offset
                 if (currentLength < _offset)
                 {
                     _logger.Warn($"File truncated (size {currentLength} < offset {_offset}). Resetting offset.");
@@ -220,37 +299,24 @@ public sealed class FileTailSource : ILogSource
                     _stream.Seek(_offset, SeekOrigin.Begin);
                 }
 
-                if (_offset >= currentLength)
+                while (_offset < currentLength && !ct.IsCancellationRequested)
                 {
-                    // Phase 1 complete: first time we hit EOF after reading from 0
-                    if (!_initialLogLoadedRaised)
+                    var bufferSize = (int)Math.Min(currentLength - _offset, 64 * 1024);
+                    var buffer = new byte[bufferSize];
+
+                    int bytesRead = await _stream.ReadAsync(buffer, 0, bufferSize, ct).ConfigureAwait(false);
+
+                    if (bytesRead <= 0)
                     {
-                        _initialLogLoadedRaised = true;
-                        _initialLogLoaded?.Invoke();
+                        break;
                     }
 
-                    continue;
-                }
-
-                // Read available bytes
-                var bufferSize = (int)Math.Min(currentLength - _offset, 64 * 1024);
-                var buffer = new byte[bufferSize];
-
-                int bytesRead = await _stream.ReadAsync(buffer, 0, bufferSize, ct).ConfigureAwait(false);
-
-                if (bytesRead > 0)
-                {
                     _offset += bytesRead;
                     var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
                     _partialLineBuffer.Append(text);
 
                     var combined = _partialLineBuffer.ToString();
                     var lines = combined.Split(["\r\n", "\n"], StringSplitOptions.None);
-
-                    // Emit completed lines. The last item is either empty (if
-                    // combined ended with a newline) or an incomplete partial
-                    // line (which we retain in the buffer).
-                    bool isHistorical = !_initialLogLoadedRaised;
 
                     for (int i = 0; i < lines.Length - 1; i++)
                     {
@@ -262,7 +328,7 @@ public sealed class FileTailSource : ILogSource
                                 SourceId: _filePath,
                                 FileOffset: _offset,
                                 Line: line,
-                                IsHistorical: isHistorical));
+                                IsHistorical: false));
                         }
                     }
 

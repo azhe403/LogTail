@@ -36,7 +36,7 @@ public partial class App : Application
             var settings = new SettingsStore(appDataDir, logger);
             var factory = new LogSourceFactory(logger);
 
-            var viewModel = new MainWindowViewModel(settings, factory);
+            var viewModel = new MainWindowViewModel(settings, factory, logger);
 
             // Apply saved theme.
             var loaded = settings.Load();
