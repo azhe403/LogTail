@@ -13,8 +13,8 @@ public sealed class LogSourceFactory : ILogSourceFactory
         _pollInterval = pollInterval == default ? TimeSpan.FromMilliseconds(250) : pollInterval;
     }
 
-    public ILogSource CreateFileSource(string filePath)
+    public ILogSource CreateFileSource(string filePath, int maxInitialLines = 50_000)
     {
-        return new FileTailSource(filePath, _pollInterval, _logger);
+        return new FileTailSource(filePath, _pollInterval, _logger, maxInitialLines);
     }
 }

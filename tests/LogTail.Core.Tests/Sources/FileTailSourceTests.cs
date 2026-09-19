@@ -96,6 +96,30 @@ public sealed class FileTailSourceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StartAsync_WhenFileExceedsMaxInitialLines_TailsOnlyLastNLines()
+    {
+        var filePath = Path.Combine(_tempDir, "exceeds_max.log");
+        var lines = Enumerable.Range(1, 100).Select(i => $"line-{i}").ToList();
+        await File.WriteAllLinesAsync(filePath, lines);
+
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger(), maxInitialLines: 10);
+
+        var events = new List<RawLogEvent>();
+        using var sub = sut.Events.Subscribe(e => events.Add(e));
+
+        await sut.StartAsync(CancellationToken.None);
+
+        var completed = await WaitUntilAsync(() => events.Count >= 10);
+
+        await sut.StopAsync();
+
+        completed.Should().BeTrue();
+        events.Should().HaveCount(10);
+        events.First().Line.Should().Be("line-91");
+        events.Last().Line.Should().Be("line-100");
+    }
+
+    [Fact]
     public async Task StartAsync_WhenFileRotated_ReopensAndEmitsNewEvents()
     {
         var filePath = Path.Combine(_tempDir, "rotate.log");

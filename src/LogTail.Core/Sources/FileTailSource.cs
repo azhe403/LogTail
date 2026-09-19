@@ -23,15 +23,17 @@ public sealed class FileTailSource : ILogSource
     private Task? _readLoop;
     private volatile bool _forceReopen;
     private readonly StringBuilder _partialLineBuffer = new();
+    private readonly int _maxInitialLines;
     private long _fileSizeAtStart;
     private bool _initialLogLoadedRaised;
     private event Action? _initialLogLoaded;
 
-    public FileTailSource(string filePath, TimeSpan pollInterval, ILogTailLogger logger)
+    public FileTailSource(string filePath, TimeSpan pollInterval, ILogTailLogger logger, int maxInitialLines = 50_000)
     {
         _filePath = filePath;
         _pollInterval = pollInterval == default ? TimeSpan.FromMilliseconds(250) : pollInterval;
         _logger = logger;
+        _maxInitialLines = maxInitialLines;
     }
 
     public string DisplayName => Path.GetFileName(_filePath);
@@ -64,7 +66,11 @@ public sealed class FileTailSource : ILogSource
 
         if (!_initialLogLoadedRaised)
         {
-            _offset = 0;
+            _offset = FindTailStartOffset(_stream, _maxInitialLines);
+            if (_offset > 0)
+            {
+                _stream.Seek(_offset, SeekOrigin.Begin);
+            }
         }
         _fileSizeAtStart = new FileInfo(_filePath).Length;
 
@@ -178,6 +184,52 @@ public sealed class FileTailSource : ILogSource
         {
             Monitor.Pulse(_readLock);
         }
+    }
+
+    private static long FindTailStartOffset(FileStream stream, int maxLines)
+    {
+        var length = stream.Length;
+        if (length == 0 || maxLines <= 0)
+        {
+            return 0;
+        }
+
+        const int chunkSize = 64 * 1024;
+        var buffer = new byte[chunkSize];
+        var position = length;
+        var newlineCount = 0;
+        var isFirstByte = true;
+
+        while (position > 0 && newlineCount < maxLines)
+        {
+            var bytesToRead = (int)Math.Min(chunkSize, position);
+            position -= bytesToRead;
+            stream.Seek(position, SeekOrigin.Begin);
+
+            var read = stream.Read(buffer, 0, bytesToRead);
+            for (var i = read - 1; i >= 0; i--)
+            {
+                if (isFirstByte)
+                {
+                    isFirstByte = false;
+                    if (buffer[i] == (byte)'\n')
+                    {
+                        continue;
+                    }
+                }
+
+                if (buffer[i] == (byte)'\n')
+                {
+                    newlineCount++;
+                    if (newlineCount >= maxLines)
+                    {
+                        return position + i + 1;
+                    }
+                }
+            }
+        }
+
+        return 0;
     }
 
     private async Task DrainInitialContentAsync(CancellationToken ct)
