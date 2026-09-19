@@ -1,0 +1,25 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:LogTail.UI.ViewModels"
+        x:Class="LogTail.UI.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="Settings"
+        Width="420"
+        Height="240"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="16" Spacing="14">
+    <StackPanel Spacing="6">
+      <TextBlock Text="Theme" FontWeight="SemiBold" />
+      <ComboBox ItemsSource="{Binding ThemeOptions}"
+                SelectedItem="{Binding Theme, Mode=TwoWay}"
+                Width="200"
+                HorizontalAlignment="Left" />
+    </StackPanel>
+    <CheckBox Content="Reopen last session on startup"
+              IsChecked="{Binding RestoreLastSession, Mode=TwoWay}" />
+    <Button Content="Close"
+            HorizontalAlignment="Right"
+            Click="OnCloseClick" />
+  </StackPanel>
+</Window>

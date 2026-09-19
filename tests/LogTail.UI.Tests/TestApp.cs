@@ -1,6 +1,9 @@
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.ReactiveUI;
+using Xunit;
+
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
 
 namespace LogTail.UI.Tests;
 

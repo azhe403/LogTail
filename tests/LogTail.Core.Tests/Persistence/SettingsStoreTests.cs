@@ -69,4 +69,52 @@ public sealed class SettingsStoreTests : IDisposable
 
         result.Should().Be(new AppSettings());
     }
+
+    [Fact]
+    public void Load_WhenFileDoesNotExist_DefaultWindowLimitsMatchSpec()
+    {
+        var sut = new SettingsStore(_tempDir);
+
+        var settings = sut.Load();
+
+        settings.TailLineLimit.Should().Be(50_000);
+        settings.InitialWindowBytes.Should().Be(8 * 1024 * 1024);
+        settings.MaxWindowBytes.Should().Be(64 * 1024 * 1024);
+    }
+
+    [Fact]
+    public void Save_WhenCustomLimitsConfigured_RoundtripsSuccessfully()
+    {
+        var sut = new SettingsStore(_tempDir);
+        var custom = new AppSettings(
+            TailLineLimit: 10_000,
+            InitialWindowBytes: 4 * 1024 * 1024,
+            MaxWindowBytes: 32 * 1024 * 1024);
+
+        sut.Save(custom);
+
+        var loaded = sut.Load();
+
+        loaded.TailLineLimit.Should().Be(10_000);
+        loaded.InitialWindowBytes.Should().Be(4 * 1024 * 1024);
+        loaded.MaxWindowBytes.Should().Be(32 * 1024 * 1024);
+    }
+
+    [Fact]
+    public void Load_WhenFileDoesNotExist_RestoreLastSessionDefaultsTrue()
+    {
+        var sut = new SettingsStore(_tempDir);
+
+        sut.Load().RestoreLastSession.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Save_WhenRestoreDisabled_RoundtripsFalse()
+    {
+        var sut = new SettingsStore(_tempDir);
+
+        sut.Save(new AppSettings(RestoreLastSession: false));
+
+        sut.Load().RestoreLastSession.Should().BeFalse();
+    }
 }

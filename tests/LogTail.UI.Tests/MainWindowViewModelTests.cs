@@ -1,4 +1,5 @@
 using System.Reactive;
+using Avalonia.Threading;
 using FluentAssertions;
 using LogTail.Core.Models;
 using LogTail.Core.Sources;
@@ -34,19 +35,22 @@ public sealed class MainWindowViewModelTests : IDisposable
         sut.WindowTitle.Should().Be("Log Tail");
         sut.StatusMessage.Should().Be("No file open");
         sut.CurrentFilePath.Should().BeNull();
-        sut.CurrentTheme.Should().Be(ThemeMode.System);
         sut.Tabs.Should().BeEmpty();
         sut.SelectedTab.Should().BeNull();
     }
 
     [Fact]
-    public void SetThemeCommand_WhenExecuted_UpdatesCurrentTheme()
+    public void RestoreTabs_WhenCalled_AddsTabsInOrderAndSelectsActive()
     {
         var sut = CreateViewModel();
+        var a = CreateLogFile("session-a.log");
+        var b = CreateLogFile("session-b.log");
+        var c = CreateLogFile("session-c.log");
 
-        sut.SetThemeCommand.Execute(ThemeMode.Dark).Subscribe();
+        sut.RestoreTabs(new[] { a, b, c }, b);
 
-        sut.CurrentTheme.Should().Be(ThemeMode.Dark);
+        sut.Tabs.Select(t => t.FilePath).Should().ContainInOrder(a, b, c);
+        sut.SelectedTab!.FilePath.Should().Be(b);
     }
 
     [Fact]
@@ -251,13 +255,29 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task StartTailingAsync_WithVeryManyHistoricalLines_RendersAll()
+    public async Task StartTailingAsync_WhenHistoricalExceedsCapacity_CapsToBufferCapacity()
     {
-        // Regression: 1M lines reproduces the 406MB opencode.log case where
-        // ObserveOn queue backlog + 50ms timer caused event loss.
+        var sut = CreateViewModel();
+        var path = Path.Combine(_tempDir, "capped-hist.log");
+        var lines = Enumerable.Range(1, 1000).Select(i => $"line {i}").ToList();
+        File.WriteAllLines(path, lines);
+
+        sut.AddTab(path);
+
+        var rendered = await WaitUntilAsync(() => sut.SelectedTab?.LogEvents.Count > 0, TimeSpan.FromSeconds(30));
+        rendered.Should().BeTrue();
+        sut.SelectedTab!.LogEvents.Count.Should().BeLessThanOrEqualTo(sut.BufferCapacity);
+        sut.SelectedTab.Status.Should().Be("tailing");
+    }
+
+    [Fact]
+    public async Task StartTailingAsync_WithVeryManyHistoricalLines_RendersCappedToLimit()
+    {
+        // Regression: the 406MB opencode.log case. Historical lines beyond the
+        // buffer capacity must be dropped so UI memory stays bounded.
         var sut = CreateViewModel();
         var path = Path.Combine(_tempDir, "huge.log");
-        var lines = Enumerable.Range(1, 1_000_000)
+        var lines = Enumerable.Range(1, 100_000)
             .Select(i => $"line {i} - padding to make line realistic in size for tailing")
             .ToList();
         File.WriteAllLines(path, lines);
@@ -265,11 +285,12 @@ public sealed class MainWindowViewModelTests : IDisposable
         sut.AddTab(path);
 
         var rendered = await WaitUntilAsync(
-            () => sut.SelectedTab?.LogEvents.Count >= 1_000_000,
-            TimeSpan.FromSeconds(480));
+            () => sut.SelectedTab?.LogEvents.Count >= sut.BufferCapacity,
+            TimeSpan.FromSeconds(60));
 
-        rendered.Should().BeTrue($"expected 1M lines rendered, got {sut.SelectedTab?.LogEvents.Count}");
-        sut.SelectedTab!.Status.Should().Be("tailing");
+        rendered.Should().BeTrue($"expected {sut.BufferCapacity} lines rendered, got {sut.SelectedTab?.LogEvents.Count}");
+        sut.SelectedTab!.LogEvents.Count.Should().Be(sut.BufferCapacity);
+        sut.SelectedTab.Status.Should().Be("tailing");
     }
 
     [Fact]
@@ -311,6 +332,11 @@ public sealed class MainWindowViewModelTests : IDisposable
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
         while (DateTime.UtcNow < deadline)
         {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                Dispatcher.UIThread.RunJobs();
+            }
+
             if (predicate())
             {
                 return true;

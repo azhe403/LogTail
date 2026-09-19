@@ -24,6 +24,8 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
     private ScrollViewer? _scrollViewer;
     private bool _isProgrammaticScroll;
     private bool _scrollRequested;
+    private IDisposable? _activeTabListener;
+    private bool _suppressOffsetEvents;
 
     public MainWindow()
     {
@@ -38,6 +40,9 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
         {
             // Register ReactiveUI Interaction handler for File Picker dialog
             ViewModel?.ShowOpenFileDialog.RegisterHandler(DoShowOpenFileDialogAsync)
+                .DisposeWith(disposables);
+
+            ViewModel?.ShowSettingsDialog.RegisterHandler(DoShowSettingsAsync)
                 .DisposeWith(disposables);
 
             // Subscribe to ViewModel AutoScroll changes using WhenAnyValue
@@ -68,13 +73,23 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
 
     private void AttachSelectedTabScrollListener(CompositeDisposable disposables)
     {
+        _activeTabListener?.Dispose();
+        _activeTabListener = null;
+        _scrollViewer = null;
+
         if (ViewModel?.SelectedTab == null)
         {
             return;
         }
 
+        // Pindah tab bukan aksi scroll user — bekukan evaluasi offset
+        // sampai viewer baru selesai layout agar AutoScroll tidak ikut mati.
+        _suppressOffsetEvents = true;
+
         var tab = ViewModel.SelectedTab;
         var tabDisposables = new CompositeDisposable();
+        _activeTabListener = tabDisposables;
+        Disposable.Create(() => tabDisposables.Dispose()).DisposeWith(disposables);
 
         // Auto-scroll to bottom on new log events for this tab.
         Observable.FromEventPattern<NotifyCollectionChangedEventHandler, NotifyCollectionChangedEventArgs>(
@@ -96,21 +111,30 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
                 .FindDescendantOfType<ScrollViewer>();
             if (scrollViewer == null)
             {
+                _suppressOffsetEvents = false;
                 return;
             }
 
             _scrollViewer = scrollViewer;
             scrollViewer.GetObservable(ScrollViewer.OffsetProperty)
+                .Skip(1)
                 .Subscribe(OnScrollOffsetChanged)
                 .DisposeWith(tabDisposables);
-        }, DispatcherPriority.Background);
 
-        tabDisposables.DisposeWith(disposables);
+            Dispatcher.UIThread.Post(() =>
+            {
+                _suppressOffsetEvents = false;
+                if (ViewModel is { AutoScroll: true })
+                {
+                    RequestScrollToBottom();
+                }
+            }, DispatcherPriority.Loaded);
+        }, DispatcherPriority.Background);
     }
 
     private void OnScrollOffsetChanged(Vector offset)
     {
-        if (_scrollViewer == null || _isProgrammaticScroll || ViewModel == null) return;
+        if (_scrollViewer == null || _isProgrammaticScroll || _suppressOffsetEvents || ViewModel == null) return;
 
         var extentHeight = _scrollViewer.Extent.Height;
         var viewportHeight = _scrollViewer.Viewport.Height;
@@ -181,6 +205,23 @@ public partial class MainWindow : ReactiveWindow<MainWindowViewModel>
 
         var selectedPath = result.Count > 0 ? result[0].Path.LocalPath : null;
         interaction.SetOutput(selectedPath);
+    }
+
+    private async Task DoShowSettingsAsync(IInteractionContext<Unit, Unit> interaction)
+    {
+        if (ViewModel is null)
+        {
+            interaction.SetOutput(Unit.Default);
+            return;
+        }
+
+        var window = new SettingsWindow
+        {
+            DataContext = ViewModel.Settings
+        };
+
+        await window.ShowDialog(this);
+        interaction.SetOutput(Unit.Default);
     }
 
     private void OnDragOver(object? sender, DragEventArgs e)
