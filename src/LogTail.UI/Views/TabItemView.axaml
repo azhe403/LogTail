@@ -11,7 +11,9 @@
         <Button Classes="tab-close"
                 Content="X"
                 FontSize="10"
-                Padding="2,0" />
+                Padding="2,0"
+                Command="{Binding $parent[TabControl].((vm:MainWindowViewModel)DataContext).CloseTabCommand}"
+                CommandParameter="{Binding}" />
     </StackPanel>
     
 </UserControl>

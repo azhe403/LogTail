@@ -65,6 +65,7 @@ public sealed class MainWindowViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> OpenFileCommand { get; }
     public ReactiveCommand<Unit, Unit> ClearCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenSettingsCommand { get; }
+    public ReactiveCommand<TabViewModel, Unit> CloseTabCommand { get; }
     public SettingsViewModel Settings { get; }
 
     private readonly ObservableAsPropertyHelper<bool> _isTailing;
@@ -125,6 +126,7 @@ public sealed class MainWindowViewModel : ReactiveObject
 
         OpenFileCommand = ReactiveCommand.CreateFromTask(OpenFileAsync);
         ClearCommand = ReactiveCommand.Create(Clear);
+        CloseTabCommand = ReactiveCommand.Create<TabViewModel>(CloseTab);
         OpenSettingsCommand = ReactiveCommand.CreateFromTask(
             async () => await ShowSettingsDialog.Handle(Unit.Default));
 
