@@ -3,6 +3,14 @@
              x:Class="LogTail.UI.App"
              RequestedThemeVariant="Default">
   <Application.Styles>
-    <FluentTheme />
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Dark"
+                               RegionColor="#1E1E22"
+                               BaseHigh="#D8D8DC"
+                               BaseMedium="#9E9EA4"
+                               AltHigh="#1E1E22" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
   </Application.Styles>
 </Application>
