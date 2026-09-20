@@ -102,7 +102,7 @@ public sealed class FileTailSourceTests : IAsyncLifetime
         var lines = Enumerable.Range(1, 100).Select(i => $"line-{i}").ToList();
         await File.WriteAllLinesAsync(filePath, lines);
 
-        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger(), maxInitialLines: 10);
+        await using var sut = new FileTailSource(filePath, TimeSpan.FromMilliseconds(50), new ConsoleLogger(), tailLineLimit: 10);
 
         var events = new List<RawLogEvent>();
         using var sub = sut.Events.Subscribe(e => events.Add(e));
@@ -344,5 +344,99 @@ public sealed class FileTailSourceTests : IAsyncLifetime
         await sut.StopAsync();
 
         run2Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenFileLargerThanLineLimit_EmitsOnlyTailLines()
+    {
+        var filePath = Path.Combine(_tempDir, "large-tail.log");
+        var allLines = Enumerable.Range(1, 1000).Select(i => $"line-{i:D4}").ToList();
+        await File.WriteAllLinesAsync(filePath, allLines);
+
+        await using var sut = new FileTailSource(
+            filePath,
+            TimeSpan.FromMilliseconds(50),
+            new ConsoleLogger(),
+            tailLineLimit: 50,
+            initialWindowBytes: 10 * 1024,
+            maxWindowBytes: 50 * 1024);
+
+        var events = new List<RawLogEvent>();
+        using var sub = sut.Events.Subscribe(e => events.Add(e));
+
+        await sut.StartAsync(CancellationToken.None);
+        var loaded = await WaitUntilAsync(() => events.Count == 50);
+
+        await sut.StopAsync();
+
+        loaded.Should().BeTrue();
+        events.Should().HaveCount(50);
+        events.First().Line.Should().Be("line-0951");
+        events.Last().Line.Should().Be("line-1000");
+        events.Should().OnlyContain(e => e.IsHistorical);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenLinesExceedInitialWindow_ExpandsWindowUpToLineLimit()
+    {
+        var filePath = Path.Combine(_tempDir, "expand-window.log");
+        var lines = Enumerable.Range(1, 100)
+            .Select(i => $"line-{i:D3}-" + new string('x', 200))
+            .ToList();
+        await File.WriteAllLinesAsync(filePath, lines);
+
+        await using var sut = new FileTailSource(
+            filePath,
+            TimeSpan.FromMilliseconds(50),
+            new ConsoleLogger(),
+            tailLineLimit: 100,
+            initialWindowBytes: 512,
+            maxWindowBytes: 64 * 1024);
+
+        var events = new List<RawLogEvent>();
+        using var sub = sut.Events.Subscribe(e => events.Add(e));
+
+        await sut.StartAsync(CancellationToken.None);
+        var loaded = await WaitUntilAsync(() => events.Count == 100);
+
+        await sut.StopAsync();
+
+        loaded.Should().BeTrue();
+        events.Should().HaveCount(100);
+        events.First().Line.Should().StartWith("line-001-");
+        events.Last().Line.Should().StartWith("line-100-");
+    }
+
+    [Fact]
+    public async Task StartAsync_AfterInitialTailLoad_NewAppendsStreamLive()
+    {
+        var filePath = Path.Combine(_tempDir, "tail-stream-live.log");
+        var lines = Enumerable.Range(1, 500).Select(i => $"hist-{i}").ToList();
+        await File.WriteAllLinesAsync(filePath, lines);
+
+        await using var sut = new FileTailSource(
+            filePath,
+            TimeSpan.FromMilliseconds(50),
+            new ConsoleLogger(),
+            tailLineLimit: 20,
+            initialWindowBytes: 4096,
+            maxWindowBytes: 16384);
+
+        var events = new List<RawLogEvent>();
+        using var sub = sut.Events.Subscribe(e => events.Add(e));
+
+        await sut.StartAsync(CancellationToken.None);
+        var initialLoaded = await WaitUntilAsync(() => events.Count == 20);
+        initialLoaded.Should().BeTrue();
+
+        await File.AppendAllTextAsync(filePath, "live-append-1\n");
+        var sawLive = await WaitUntilAsync(() => events.Any(e => e.Line == "live-append-1"));
+
+        await sut.StopAsync();
+
+        sawLive.Should().BeTrue();
+        events.Count.Should().Be(21);
+        events.Last().Line.Should().Be("live-append-1");
+        events.Last().IsHistorical.Should().BeFalse();
     }
 }

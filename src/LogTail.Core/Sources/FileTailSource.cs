@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -23,17 +24,27 @@ public sealed class FileTailSource : ILogSource
     private Task? _readLoop;
     private volatile bool _forceReopen;
     private readonly StringBuilder _partialLineBuffer = new();
-    private readonly int _maxInitialLines;
+    private readonly int _tailLineLimit;
+    private readonly int _initialWindowBytes;
+    private readonly int _maxWindowBytes;
     private long _fileSizeAtStart;
     private bool _initialLogLoadedRaised;
     private event Action? _initialLogLoaded;
 
-    public FileTailSource(string filePath, TimeSpan pollInterval, ILogTailLogger logger, int maxInitialLines = 50_000)
+    public FileTailSource(
+        string filePath,
+        TimeSpan pollInterval,
+        ILogTailLogger logger,
+        int tailLineLimit = 50_000,
+        int initialWindowBytes = 8 * 1024 * 1024,
+        int maxWindowBytes = 64 * 1024 * 1024)
     {
         _filePath = filePath;
         _pollInterval = pollInterval == default ? TimeSpan.FromMilliseconds(250) : pollInterval;
         _logger = logger;
-        _maxInitialLines = maxInitialLines;
+        _tailLineLimit = tailLineLimit > 0 ? tailLineLimit : 50_000;
+        _initialWindowBytes = initialWindowBytes > 0 ? initialWindowBytes : 8 * 1024 * 1024;
+        _maxWindowBytes = maxWindowBytes >= _initialWindowBytes ? maxWindowBytes : _initialWindowBytes;
     }
 
     public string DisplayName => Path.GetFileName(_filePath);
@@ -66,11 +77,7 @@ public sealed class FileTailSource : ILogSource
 
         if (!_initialLogLoadedRaised)
         {
-            _offset = FindTailStartOffset(_stream, _maxInitialLines);
-            if (_offset > 0)
-            {
-                _stream.Seek(_offset, SeekOrigin.Begin);
-            }
+            _offset = 0;
         }
         _fileSizeAtStart = new FileInfo(_filePath).Length;
 
@@ -186,52 +193,6 @@ public sealed class FileTailSource : ILogSource
         }
     }
 
-    private static long FindTailStartOffset(FileStream stream, int maxLines)
-    {
-        var length = stream.Length;
-        if (length == 0 || maxLines <= 0)
-        {
-            return 0;
-        }
-
-        const int chunkSize = 64 * 1024;
-        var buffer = new byte[chunkSize];
-        var position = length;
-        var newlineCount = 0;
-        var isFirstByte = true;
-
-        while (position > 0 && newlineCount < maxLines)
-        {
-            var bytesToRead = (int)Math.Min(chunkSize, position);
-            position -= bytesToRead;
-            stream.Seek(position, SeekOrigin.Begin);
-
-            var read = stream.Read(buffer, 0, bytesToRead);
-            for (var i = read - 1; i >= 0; i--)
-            {
-                if (isFirstByte)
-                {
-                    isFirstByte = false;
-                    if (buffer[i] == (byte)'\n')
-                    {
-                        continue;
-                    }
-                }
-
-                if (buffer[i] == (byte)'\n')
-                {
-                    newlineCount++;
-                    if (newlineCount >= maxLines)
-                    {
-                        return position + i + 1;
-                    }
-                }
-            }
-        }
-
-        return 0;
-    }
-
     private async Task DrainInitialContentAsync(CancellationToken ct)
     {
         if (_initialLogLoadedRaised || _stream == null || !File.Exists(_filePath))
@@ -240,75 +201,150 @@ public sealed class FileTailSource : ILogSource
         }
 
         var sw = Stopwatch.StartNew();
-        var currentLength = new FileInfo(_filePath).Length;
-        var totalLinesEmitted = 0;
+        var fileLength = new FileInfo(_filePath).Length;
 
-        if (_stream.Position != _offset)
+        if (fileLength == 0)
         {
-            _stream.Seek(_offset, SeekOrigin.Begin);
+            _offset = 0;
+            _initialLogLoadedRaised = true;
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(50).ConfigureAwait(false);
+                _initialLogLoaded?.Invoke();
+            });
+            return;
         }
 
-        while (_offset < currentLength && !ct.IsCancellationRequested)
-        {
-            var bufferSize = (int)Math.Min(currentLength - _offset, 1024 * 1024);
-            var buffer = new byte[bufferSize];
+        long currentWindow = Math.Min(fileLength, _initialWindowBytes);
+        var collectedLines = new Queue<string>(_tailLineLimit);
 
-            int bytesRead = await _stream.ReadAsync(buffer, 0, bufferSize, ct).ConfigureAwait(false);
-            if (bytesRead <= 0)
+        while (!ct.IsCancellationRequested)
+        {
+            long startOffset = fileLength - currentWindow;
+            _stream.Seek(startOffset, SeekOrigin.Begin);
+
+            int bytesToRead = (int)currentWindow;
+            byte[] rented = ArrayPool<byte>.Shared.Rent(bytesToRead);
+            int totalBytesRead = 0;
+
+            try
+            {
+                while (totalBytesRead < bytesToRead)
+                {
+                    int read = await _stream.ReadAsync(
+                        rented.AsMemory(totalBytesRead, bytesToRead - totalBytesRead),
+                        ct).ConfigureAwait(false);
+
+                    if (read <= 0) break;
+                    totalBytesRead += read;
+                }
+
+                collectedLines.Clear();
+                ExtractLinesFromSpan(
+                    new ReadOnlySpan<byte>(rented, 0, totalBytesRead),
+                    startOffset > 0,
+                    _tailLineLimit,
+                    collectedLines);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+
+            if (collectedLines.Count >= _tailLineLimit ||
+                currentWindow >= fileLength ||
+                currentWindow >= _maxWindowBytes)
             {
                 break;
             }
 
-            _offset += bytesRead;
-            var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-            _partialLineBuffer.Append(text);
-
-            var combined = _partialLineBuffer.ToString();
-            var lines = combined.Split(["\r\n", "\n"], StringSplitOptions.None);
-
-            for (int i = 0; i < lines.Length - 1; i++)
+            long nextWindow = Math.Min(fileLength, Math.Min(currentWindow * 2, _maxWindowBytes));
+            if (nextWindow <= currentWindow)
             {
-                var line = lines[i];
-                if (!string.IsNullOrEmpty(line))
-                {
-                    totalLinesEmitted++;
-                    _events.OnNext(new RawLogEvent(
-                        ReadAt: DateTimeOffset.UtcNow,
-                        SourceId: _filePath,
-                        FileOffset: _offset,
-                        Line: line,
-                        IsHistorical: true));
-                }
+                break;
             }
-
-            if (lines.Length > 0 && !string.IsNullOrEmpty(lines[^1]) && _offset >= currentLength)
-            {
-                totalLinesEmitted++;
-                _events.OnNext(new RawLogEvent(
-                    ReadAt: DateTimeOffset.UtcNow,
-                    SourceId: _filePath,
-                    FileOffset: _offset,
-                    Line: lines[^1],
-                    IsHistorical: true));
-                _partialLineBuffer.Clear();
-            }
-            else
-            {
-                _partialLineBuffer.Clear();
-                _partialLineBuffer.Append(lines[^1]);
-            }
+            currentWindow = nextWindow;
         }
 
+        int totalEmitted = 0;
+        foreach (var line in collectedLines)
+        {
+            totalEmitted++;
+            _events.OnNext(new RawLogEvent(
+                ReadAt: DateTimeOffset.UtcNow,
+                SourceId: _filePath,
+                FileOffset: fileLength,
+                Line: line,
+                IsHistorical: true));
+        }
+
+        _offset = fileLength;
+        _partialLineBuffer.Clear();
+
         sw.Stop();
-        _logger.Info($"[InitialLoad:Core] File: '{Path.GetFileName(_filePath)}', Size: {currentLength:N0} bytes, Lines: {totalLinesEmitted:N0}, Read Time: {sw.ElapsedMilliseconds} ms ({sw.Elapsed.TotalSeconds:F2}s)");
+        _logger.Info($"[InitialLoad:Core] File: '{Path.GetFileName(_filePath)}', Size: {fileLength:N0} bytes, Lines Emitted: {totalEmitted:N0}, Read Time: {sw.ElapsedMilliseconds} ms ({sw.Elapsed.TotalSeconds:F2}s)");
 
         _initialLogLoadedRaised = true;
 
         _ = Task.Run(async () =>
         {
-            await Task.Delay(100).ConfigureAwait(false);
+            await Task.Delay(50).ConfigureAwait(false);
             _initialLogLoaded?.Invoke();
         });
+    }
+
+    private static void ExtractLinesFromSpan(
+        ReadOnlySpan<byte> span,
+        bool isPartialAtStart,
+        int maxLines,
+        Queue<string> output)
+    {
+        var current = span;
+
+        if (isPartialAtStart)
+        {
+            int firstNewline = current.IndexOf((byte)'\n');
+            if (firstNewline >= 0)
+            {
+                current = current.Slice(firstNewline + 1);
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        while (!current.IsEmpty)
+        {
+            int nextNewline = current.IndexOf((byte)'\n');
+            ReadOnlySpan<byte> lineBytes;
+
+            if (nextNewline >= 0)
+            {
+                lineBytes = current.Slice(0, nextNewline);
+                current = current.Slice(nextNewline + 1);
+            }
+            else
+            {
+                lineBytes = current;
+                current = ReadOnlySpan<byte>.Empty;
+            }
+
+            if (!lineBytes.IsEmpty && lineBytes[^1] == (byte)'\r')
+            {
+                lineBytes = lineBytes.Slice(0, lineBytes.Length - 1);
+            }
+
+            if (!lineBytes.IsEmpty)
+            {
+                var lineStr = Encoding.UTF8.GetString(lineBytes);
+                if (output.Count >= maxLines)
+                {
+                    output.Dequeue();
+                }
+                output.Enqueue(lineStr);
+            }
+        }
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)

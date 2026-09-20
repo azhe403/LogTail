@@ -17,10 +17,11 @@ public class TabViewModelTests
         vm.Status.Should().Be("Idle");
         vm.IsTailing.Should().BeFalse();
         vm.LineCount.Should().Be(0);
+        vm.TotalLinesAppended.Should().Be(0);
     }
 
     [Fact]
-    public void AddLogEvent_IncrementsLineCount()
+    public void AddLogEvent_IncrementsLineCountAndTotalLines()
     {
         var vm = new TabViewModel("/path/to/file.log");
         var raw = new RawLogEvent(DateTimeOffset.UtcNow, "test", 0, "Test message");
@@ -29,6 +30,7 @@ public class TabViewModelTests
         vm.AddLogEvent(logEvent);
 
         vm.LineCount.Should().Be(1);
+        vm.TotalLinesAppended.Should().Be(1);
         vm.LogEvents.Should().HaveCount(1);
     }
 
@@ -46,10 +48,63 @@ public class TabViewModelTests
 
         vm.LogEvents[0].LineNumber.Should().Be(1);
         vm.LogEvents[1].LineNumber.Should().Be(2);
+        vm.TotalLinesAppended.Should().Be(2);
     }
 
     [Fact]
-    public void ClearEvents_ResetsCount()
+    public void AddLogEvents_AssignsMonotonicLineNumbers()
+    {
+        var vm = new TabViewModel("/path/to/file.log");
+        var batch = new List<EnrichedLogEvent>
+        {
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 0, "L1"), LogLevel.Info, DateTimeOffset.Now, null),
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 10, "L2"), LogLevel.Info, DateTimeOffset.Now, null),
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 20, "L3"), LogLevel.Info, DateTimeOffset.Now, null)
+        };
+
+        vm.AddLogEvents(batch);
+
+        vm.LogEvents.Should().HaveCount(3);
+        vm.LogEvents[0].LineNumber.Should().Be(1);
+        vm.LogEvents[1].LineNumber.Should().Be(2);
+        vm.LogEvents[2].LineNumber.Should().Be(3);
+        vm.TotalLinesAppended.Should().Be(3);
+    }
+
+    [Fact]
+    public void AddLogEvents_WhenEvicted_MaintainsMonotonicLineNumbers()
+    {
+        var vm = new TabViewModel("/path/to/file.log");
+        var batch1 = new List<EnrichedLogEvent>
+        {
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 0, "L1"), LogLevel.Info, DateTimeOffset.Now, null),
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 10, "L2"), LogLevel.Info, DateTimeOffset.Now, null),
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 20, "L3"), LogLevel.Info, DateTimeOffset.Now, null)
+        };
+        vm.AddLogEvents(batch1);
+
+        // Evict front 2 lines (simulating ring buffer overflow)
+        vm.EvictFromFront(2);
+        vm.LineCount.Should().Be(1);
+        vm.LogEvents[0].LineNumber.Should().Be(3);
+
+        // Append next batch
+        var batch2 = new List<EnrichedLogEvent>
+        {
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 30, "L4"), LogLevel.Info, DateTimeOffset.Now, null),
+            new(new RawLogEvent(DateTimeOffset.UtcNow, "test", 40, "L5"), LogLevel.Info, DateTimeOffset.Now, null)
+        };
+        vm.AddLogEvents(batch2);
+
+        vm.LineCount.Should().Be(3);
+        vm.TotalLinesAppended.Should().Be(5);
+        vm.LogEvents[0].LineNumber.Should().Be(3);
+        vm.LogEvents[1].LineNumber.Should().Be(4);
+        vm.LogEvents[2].LineNumber.Should().Be(5);
+    }
+
+    [Fact]
+    public void ClearEvents_ResetsCountAndTotalLines()
     {
         var vm = new TabViewModel("/path/to/file.log");
         var raw = new RawLogEvent(DateTimeOffset.UtcNow, "test", 0, "Test message");
@@ -59,6 +114,7 @@ public class TabViewModelTests
         vm.ClearEvents();
 
         vm.LineCount.Should().Be(0);
+        vm.TotalLinesAppended.Should().Be(0);
         vm.LogEvents.Should().BeEmpty();
     }
 
@@ -88,9 +144,6 @@ public class TabViewModelTests
 
         var vm = new TabViewModel(nonExistent);
 
-        // Constructor must not throw for missing files — the upstream validator
-        // already rejects those, but defensive code keeps a missing path from
-        // crashing the tab.
         vm.FileSize.Should().Be(0);
         vm.LastModified.Should().Be(default);
         vm.IsTailing.Should().BeFalse();

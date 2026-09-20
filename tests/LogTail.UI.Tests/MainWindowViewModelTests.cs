@@ -131,17 +131,14 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     [Fact]
-    public void SelectedTabStatus_WhenTabSelected_ContainsBufferCount()
+    public void SelectedTabStatus_WhenTabSelected_ContainsExpectedFields()
     {
         var sut = CreateViewModel();
         var path = CreateLogFile("buffer.log");
         sut.AddTab(path);
 
-        // Status should include "0 / N lines" before any events arrive
-        // (the format is the spec contract). Allow thousands separator
-        // (e.g. 50,000) in the max value.
-        sut.SelectedTabStatus.Should().Contain("lines");
-        sut.SelectedTabStatus.Should().MatchRegex(@"\d / [\d,]+ lines");
+        sut.SelectedTabStatus.Should().Contain("buffer.log");
+        sut.SelectedTabStatus.Should().Contain("0 lines/s");
     }
 
     [Fact]

@@ -425,12 +425,7 @@ public sealed class MainWindowViewModel : ReactiveObject
         tab.IsTailing = true;
         tab.Status = resumeOnly ? "tailing" : "loading";
 
-        var loadedSettings = _settings.Load();
-        var source = _sourceFactory.CreateFileSource(
-            tab.FilePath,
-            loadedSettings.TailLineLimit,
-            loadedSettings.InitialWindowBytes,
-            loadedSettings.MaxWindowBytes);
+        var source = _sourceFactory.CreateFileSource(tab.FilePath, BufferCapacity);
         CurrentSource = source;
 
         if (resumeOnly)
@@ -458,8 +453,9 @@ public sealed class MainWindowViewModel : ReactiveObject
         source.InitialLogLoaded += _onInitialLoadedHandler;
 
         _eventsSubscription = source.Events
+            .ObserveOn(RxApp.TaskpoolScheduler)
             .Select(raw => (Raw: raw, Enriched: Enrich.Transform(raw)))
-            .Buffer(TimeSpan.FromMilliseconds(50), 5000)
+            .Buffer(TimeSpan.FromMilliseconds(50), 2000)
             .Where(batch => batch.Count > 0)
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(
@@ -490,24 +486,24 @@ public sealed class MainWindowViewModel : ReactiveObject
                     }
                     else
                     {
-                if (!_historicalFlushed)
-                {
-                    List<EnrichedLogEvent> snapshot;
-                    lock (_historicalLock)
-                    {
-                        var excess = _pendingHistoricalEvents.Count - BufferCapacity;
-                        if (excess > 0)
+                        if (!_historicalFlushed)
                         {
-                            _pendingHistoricalEvents.RemoveRange(0, excess);
+                            List<EnrichedLogEvent> snapshot;
+                            lock (_historicalLock)
+                            {
+                                var excess = _pendingHistoricalEvents.Count - BufferCapacity;
+                                if (excess > 0)
+                                {
+                                    _pendingHistoricalEvents.RemoveRange(0, excess);
+                                }
+                                snapshot = new List<EnrichedLogEvent>(_pendingHistoricalEvents);
+                                _pendingHistoricalEvents.Clear();
+                            }
+                            if (snapshot.Count > 0)
+                            {
+                                FlushPendingHistorical(snapshot);
+                            }
                         }
-                        snapshot = new List<EnrichedLogEvent>(_pendingHistoricalEvents);
-                        _pendingHistoricalEvents.Clear();
-                    }
-                    if (snapshot.Count > 0)
-                    {
-                        FlushPendingHistorical(snapshot);
-                    }
-                }
                         OnNewEventsBatch(batch.Select(b => b.Enriched).ToList());
                     }
                 },
@@ -597,7 +593,7 @@ public sealed class MainWindowViewModel : ReactiveObject
 
         // Bulk evict + bulk append: 2 UI notifications per batch instead of
         // ~2*batch.Count. Avoids O(n*m) RemoveAt(0) loop at 50k capacity.
-        var excess = (tab.LogEvents.Count + batch.Count) - _buffer.Capacity;
+        var excess = (tab.LogEvents.Count + batch.Count) - BufferCapacity;
         if (excess > 0)
         {
             tab.EvictFromFront(excess);
@@ -610,6 +606,18 @@ public sealed class MainWindowViewModel : ReactiveObject
 
         tab.AddLogEvents(batch);
         RecordLinesForRate(tab, batch.Count);
+
+        try
+        {
+            var info = new FileInfo(tab.FilePath);
+            if (info.Exists)
+            {
+                tab.FileSize = info.Length;
+                tab.LastModified = info.LastWriteTime;
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private void Clear()
@@ -637,19 +645,16 @@ public sealed class MainWindowViewModel : ReactiveObject
         // produces a double "•" separator and looks broken.
         var modified = tab.LastModified == default
             ? "—"
-            : tab.LastModified.ToString("HH:mm:ss");
+            : tab.LastModified.ToString("yyyy-MM-dd HH:mm:ss");
 
         // Always show rate — including 0 when idle — so the status bar reads
         // consistently (no missing field that flickers in/out as events arrive).
+        var linesCount = $"{tab.LogEvents.Count:N0} lines";
         var rate = $"{tab.LinesPerSecond:0.#} lines/s";
 
         var state = tab.IsTailing ? "tailing" : tab.Status;
 
-        // Format count with thousands separator (e.g. 5,234) to match size/date
-        // readability.
-        var countText = $"{tab.LogEvents.Count:N0} / {bufferCapacity:N0} lines";
-
-        return $"{tab.FilePath} | {sizeText} | {modified} | {countText} | {rate} | {state}";
+        return $"{tab.FilePath} | {sizeText} | {modified} | {linesCount} | {rate} | {state}";
     }
 
 }

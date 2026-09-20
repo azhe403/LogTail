@@ -47,6 +47,9 @@ public sealed class TabViewModel : ReactiveObject
 
     public BulkObservableCollection<EnrichedLogEvent> LogEvents { get; } = new();
 
+    private long _totalLinesAppended;
+    public long TotalLinesAppended => _totalLinesAppended;
+
     public int LineCount
     {
         get => _lineCount;
@@ -108,8 +111,9 @@ public sealed class TabViewModel : ReactiveObject
 
     public void AddLogEvent(EnrichedLogEvent logEvent)
     {
+        _totalLinesAppended++;
         var trimmed = TrimLineIfNeeded(logEvent);
-        var numberedEvent = trimmed with { LineNumber = LineCount + 1 };
+        var numberedEvent = trimmed with { LineNumber = (int)_totalLinesAppended };
         LogEvents.Add(numberedEvent);
         LineCount = LogEvents.Count;
     }
@@ -127,11 +131,10 @@ public sealed class TabViewModel : ReactiveObject
         }
 
         var numbered = new List<EnrichedLogEvent>(batch.Count);
-        var nextNumber = LineCount + 1;
         foreach (var item in batch)
         {
-            numbered.Add(TrimLineIfNeeded(item) with { LineNumber = nextNumber });
-            nextNumber++;
+            _totalLinesAppended++;
+            numbered.Add(TrimLineIfNeeded(item) with { LineNumber = (int)_totalLinesAppended });
         }
 
         LogEvents.AddRange(numbered);
@@ -156,6 +159,7 @@ public sealed class TabViewModel : ReactiveObject
     {
         LogEvents.Clear();
         LineCount = 0;
+        _totalLinesAppended = 0;
     }
 
     private static EnrichedLogEvent TrimLineIfNeeded(EnrichedLogEvent logEvent)
