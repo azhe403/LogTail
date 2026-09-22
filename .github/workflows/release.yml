@@ -10,6 +10,9 @@ on:
     tags:
       - 'v*'
 
+env:
+  VERSION: '0.1.0'
+
 permissions:
   contents: write
 
@@ -104,12 +107,11 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
             echo "release_tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-            echo "release_name=Release ${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "release_name=LogTail ${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
-            SHORT_SHA=$(git rev-parse --short HEAD)
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "release_tag=preview-${SHORT_SHA}" >> $GITHUB_OUTPUT
-            echo "release_name=Pre-release (${SHORT_SHA})" >> $GITHUB_OUTPUT
+            echo "release_tag=v${{ env.VERSION }}-pre.${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "release_name=LogTail v${{ env.VERSION }}-pre.${{ github.run_number }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Create Release
